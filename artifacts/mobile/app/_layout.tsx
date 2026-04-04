@@ -12,18 +12,33 @@ import React, { useEffect } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
-
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { AuthProvider } from "@/contexts/AuthContext";
+import { CareDataProvider } from "@/contexts/CareDataContext";
 
-// Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient();
 
 function RootLayoutNav() {
   return (
-    <Stack screenOptions={{ headerBackTitle: "Back" }}>
-      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+    <Stack
+      screenOptions={{
+        headerShown: false,
+        contentStyle: { backgroundColor: "#060a18" },
+        animation: "fade",
+      }}
+    >
+      <Stack.Screen name="index" />
+      <Stack.Screen name="login" />
+      <Stack.Screen name="register" />
+      <Stack.Screen name="(care-receiver)" />
+      <Stack.Screen name="(caregiver)" />
+      <Stack.Screen name="(tabs)" />
+      <Stack.Screen
+        name="emergency-call"
+        options={{ presentation: "fullScreenModal", animation: "fade" }}
+      />
     </Stack>
   );
 }
@@ -48,9 +63,13 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <ErrorBoundary>
         <QueryClientProvider client={queryClient}>
-          <GestureHandlerRootView>
+          <GestureHandlerRootView style={{ flex: 1 }}>
             <KeyboardProvider>
-              <RootLayoutNav />
+              <AuthProvider>
+                <CareDataProvider>
+                  <RootLayoutNav />
+                </CareDataProvider>
+              </AuthProvider>
             </KeyboardProvider>
           </GestureHandlerRootView>
         </QueryClientProvider>
