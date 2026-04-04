@@ -1,5 +1,15 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import {
+  collection,
+  doc,
+  onSnapshot,
+  query,
+  serverTimestamp,
+  updateDoc,
+  where,
+} from "firebase/firestore";
 import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { db, isFirebaseConfigured } from "@/services/firebase";
 import { useAuth } from "./AuthContext";
 
 export type ReceiverStatus = "checked-in" | "missed" | "emergency" | "unknown";
@@ -53,9 +63,21 @@ const DEMO_RECEIVERS: CareReceiver[] = [
     phone: "+1 (555) 010-1003",
     status: "emergency",
     lastCheckIn: new Date(Date.now() - 130 * 60000).toISOString(),
-    location: { lat: 37.7739, lng: -122.4210 },
+    location: { lat: 37.7739, lng: -122.421 },
   },
 ];
+
+function computeStatus(lastCheckIn: any): ReceiverStatus {
+  if (!lastCheckIn) return "unknown";
+  const ts =
+    typeof lastCheckIn.toDate === "function"
+      ? lastCheckIn.toDate().getTime()
+      : new Date(lastCheckIn).getTime();
+  const diffMin = (Date.now() - ts) / 60000;
+  if (diffMin < 30) return "checked-in";
+  if (diffMin < 120) return "missed";
+  return "emergency";
+}
 
 export function CareDataProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
@@ -64,39 +86,112 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!user) return;
-    if (user.role === "care-receiver") {
-      AsyncStorage.getItem(`${CHECK_IN_KEY}:${user.id}`).then((val) => {
-        if (val) setLastCheckIn(val);
-      });
-    } else if (user.role === "caregiver" || user.role === "family") {
-      AsyncStorage.getItem(`${RECEIVERS_KEY}:${user.id}`).then((val) => {
-        if (val) {
-          setCareReceivers(JSON.parse(val));
-        } else {
-          setCareReceivers(DEMO_RECEIVERS);
-          AsyncStorage.setItem(`${RECEIVERS_KEY}:${user.id}`, JSON.stringify(DEMO_RECEIVERS));
-        }
-      });
+    if (!user) {
+      setCareReceivers([]);
+      setLastCheckIn(null);
+      return;
+    }
+
+    if (isFirebaseConfigured && db) {
+      if (user.role === "care-receiver") {
+        const unsubscribe = onSnapshot(doc(db, "users", user.id), (snap) => {
+          if (snap.exists()) {
+            const data = snap.data();
+            const ts = data.lastCheckIn;
+            if (ts) {
+              const date =
+                typeof ts.toDate === "function" ? ts.toDate() : new Date(ts);
+              setLastCheckIn(date.toISOString());
+            }
+          }
+        });
+        return unsubscribe;
+      } else {
+        setLoading(true);
+        const q = query(
+          collection(db, "users"),
+          where("role", "==", "care-receiver")
+        );
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+          const liveReceivers: CareReceiver[] = snapshot.docs.map((d) => {
+            const data = d.data();
+            const status = computeStatus(data.lastCheckIn);
+            const ts = data.lastCheckIn;
+            let lastCheckInStr: string | null = null;
+            if (ts) {
+              lastCheckInStr =
+                typeof ts.toDate === "function"
+                  ? ts.toDate().toISOString()
+                  : new Date(ts).toISOString();
+            }
+            return {
+              id: d.id,
+              name: data.name ?? "Unknown",
+              email: data.email ?? "",
+              phone: data.phone ?? undefined,
+              status,
+              lastCheckIn: lastCheckInStr,
+              location: data.location
+                ? { lat: data.location.lat, lng: data.location.lng }
+                : undefined,
+            };
+          });
+          setCareReceivers(
+            liveReceivers.length > 0
+              ? liveReceivers
+              : DEMO_RECEIVERS
+          );
+          setLoading(false);
+        });
+        return unsubscribe;
+      }
+    } else {
+      if (user.role === "care-receiver") {
+        AsyncStorage.getItem(`${CHECK_IN_KEY}:${user.id}`).then((val) => {
+          if (val) setLastCheckIn(val);
+        });
+      } else {
+        AsyncStorage.getItem(`${RECEIVERS_KEY}:${user.id}`).then((val) => {
+          if (val) {
+            setCareReceivers(JSON.parse(val));
+          } else {
+            setCareReceivers(DEMO_RECEIVERS);
+            AsyncStorage.setItem(
+              `${RECEIVERS_KEY}:${user.id}`,
+              JSON.stringify(DEMO_RECEIVERS)
+            );
+          }
+        });
+      }
     }
   }, [user]);
 
   const checkIn = useCallback(async () => {
     if (!user) return;
     const now = new Date().toISOString();
-    await AsyncStorage.setItem(`${CHECK_IN_KEY}:${user.id}`, now);
+
+    if (isFirebaseConfigured && db) {
+      await updateDoc(doc(db, "users", user.id), {
+        lastCheckIn: serverTimestamp(),
+        status: "checked-in",
+      });
+    } else {
+      await AsyncStorage.setItem(`${CHECK_IN_KEY}:${user.id}`, now);
+    }
     setLastCheckIn(now);
   }, [user]);
 
   const refreshStatus = useCallback(() => {
-    if (!user) return;
+    if (!user || isFirebaseConfigured) return;
     AsyncStorage.getItem(`${RECEIVERS_KEY}:${user.id}`).then((val) => {
       if (val) setCareReceivers(JSON.parse(val));
     });
   }, [user]);
 
   return (
-    <CareDataContext.Provider value={{ careReceivers, lastCheckIn, checkIn, loading, refreshStatus }}>
+    <CareDataContext.Provider
+      value={{ careReceivers, lastCheckIn, checkIn, loading, refreshStatus }}
+    >
       {children}
     </CareDataContext.Provider>
   );

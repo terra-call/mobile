@@ -24,3 +24,13 @@ expertMode = true
 [postMerge]
 path = "scripts/post-merge.sh"
 timeoutMs = 20000
+
+[userenv]
+
+[userenv.shared]
+EXPO_PUBLIC_FIREBASE_API_KEY = "AIzaSyANK3sYmA-byOoltomu4CbJEicKELLDkAI"
+EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN = "terra-call-9335b.firebaseapp.com"
+EXPO_PUBLIC_FIREBASE_PROJECT_ID = "terra-call-9335b"
+EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET = "terra-call-9335b.firebasestorage.app"
+EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID = "173877385922"
+EXPO_PUBLIC_FIREBASE_APP_ID = "1:173877385922:web:89f8d7ae52b6bda75b795b"
