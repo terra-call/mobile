@@ -58,7 +58,7 @@ export default function LoginScreen() {
       >
         <View style={styles.logoSection}>
           <Image
-            source={require("@/assets/images/icon.png")}
+            source={require("@/assets/images/terra_logo.jpg")}
             style={styles.logo}
             contentFit="contain"
           />
