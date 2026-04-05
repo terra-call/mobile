@@ -98,16 +98,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const register = useCallback(async ({ email, password, name, role, phone }: RegisterData) => {
     if (isFirebaseConfigured && auth && db) {
+      // Step 1: Create Firebase Auth account — if this throws, registration fails.
       const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
-      await setDoc(doc(db, "users", cred.user.uid), {
+
+      // Step 2: Write Firestore profile — non-fatal so the account is still usable
+      // if security rules haven't been configured yet.
+      try {
+        await setDoc(doc(db, "users", cred.user.uid), {
+          email: email.trim(),
+          name,
+          role,
+          phone: phone ?? "",
+          status: role === "care-receiver" ? "unknown" : null,
+          lastCheckIn: null,
+          location: null,
+          createdAt: serverTimestamp(),
+        });
+      } catch (fsErr) {
+        console.warn("[Terra] Firestore profile write failed:", fsErr);
+      }
+
+      // Manually set user to avoid race condition: onAuthStateChanged fires
+      // before setDoc completes, finds no document, and resets user to null.
+      setUser({
+        id: cred.user.uid,
         email: email.trim(),
         name,
         role,
-        phone: phone ?? "",
-        status: role === "care-receiver" ? "unknown" : null,
-        lastCheckIn: null,
-        location: null,
-        createdAt: serverTimestamp(),
+        phone: phone || undefined,
       });
     } else {
       const raw = await AsyncStorage.getItem(USERS_KEY);

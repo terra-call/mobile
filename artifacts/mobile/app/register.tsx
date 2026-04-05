@@ -89,7 +89,16 @@ export default function RegisterScreen() {
     try {
       await register({ email: email.trim(), password, name: name.trim(), role: selectedRole, phone: phone.trim() });
     } catch (err: unknown) {
-      Alert.alert("Registration Failed", err instanceof Error ? err.message : "Could not create account");
+      const code = (err as { code?: string })?.code ?? "";
+      let message = "Could not create account. Please try again.";
+      if (code === "auth/email-already-in-use") message = "That email is already registered. Try signing in instead.";
+      else if (code === "auth/invalid-email") message = "Please enter a valid email address.";
+      else if (code === "auth/weak-password") message = "Password must be at least 6 characters.";
+      else if (code === "auth/network-request-failed") message = "Network error — check your connection and try again.";
+      else if (code === "auth/too-many-requests") message = "Too many attempts. Please wait a moment and try again.";
+      else if (code === "permission-denied") message = "Account created but profile save failed. Please contact support.";
+      else if (err instanceof Error && err.message) message = err.message;
+      Alert.alert("Registration Failed", message);
     } finally {
       setLoading(false);
     }
