@@ -1,0 +1,64 @@
+<svg width="1024" height="1024" viewBox="215 40 250 250" xmlns="http://www.w3.org/2000/svg">
+<defs>
+  <clipPath id="ic">
+    <rect x="215" y="40" width="250" height="250" rx="56" ry="56"/>
+  </clipPath>
+  <clipPath id="gc">
+    <circle cx="340" cy="165" r="82"/>
+  </clipPath>
+  <radialGradient id="bg" cx="50%" cy="40%" r="60%">
+    <stop offset="0%" stop-color="#0a2444"/>
+    <stop offset="100%" stop-color="#040d1a"/>
+  </radialGradient>
+  <radialGradient id="ocean" cx="36%" cy="32%" r="65%">
+    <stop offset="0%" stop-color="#2196c4"/>
+    <stop offset="55%" stop-color="#0c5090"/>
+    <stop offset="100%" stop-color="#061e40"/>
+  </radialGradient>
+</defs>
+
+<!-- Icon background -->
+<rect x="215" y="40" width="250" height="250" rx="56" ry="56" fill="url(#bg)"/>
+
+<!-- Globe solid sphere -->
+<circle cx="340" cy="165" r="82" fill="url(#ocean)" clip-path="url(#ic)"/>
+
+<!-- Latitude/longitude grid lines -->
+<g clip-path="url(#gc)" opacity="0.22">
+  <ellipse cx="340" cy="165" rx="82" ry="20" fill="none" stroke="#7dd8f5" stroke-width="1.2"/>
+  <ellipse cx="340" cy="165" rx="82" ry="44" fill="none" stroke="#7dd8f5" stroke-width="1.2"/>
+  <ellipse cx="340" cy="165" rx="82" ry="68" fill="none" stroke="#7dd8f5" stroke-width="1.2"/>
+  <ellipse cx="340" cy="165" rx="20" ry="82" fill="none" stroke="#7dd8f5" stroke-width="1.2"/>
+  <ellipse cx="340" cy="165" rx="44" ry="82" fill="none" stroke="#7dd8f5" stroke-width="1.2"/>
+  <ellipse cx="340" cy="165" rx="68" ry="82" fill="none" stroke="#7dd8f5" stroke-width="1.2"/>
+</g>
+
+<!-- Globe shine -->
+<ellipse cx="306" cy="128" rx="24" ry="16" fill="white" opacity="0.12" transform="rotate(-20 306 128)" clip-path="url(#gc)"/>
+
+<!-- Orbital ring back arc (dashed, behind) -->
+<ellipse cx="340" cy="165" rx="116" ry="29" fill="none" stroke="#00d4f0" stroke-width="1.8" stroke-dasharray="5 4" opacity="0.28" clip-path="url(#ic)"/>
+<!-- Orbital ring front arc (bold) -->
+<path d="M224 165 A116 29 0 0 0 456 165" fill="none" stroke="#00d4f0" stroke-width="5" clip-path="url(#ic)"/>
+<!-- Ring glow -->
+<path d="M224 165 A116 29 0 0 0 456 165" fill="none" stroke="#00d4f0" stroke-width="16" opacity="0.10" clip-path="url(#ic)"/>
+
+<!-- Orbit signal dot right -->
+<circle cx="456" cy="165" r="10" fill="#00d4f0" clip-path="url(#ic)"/>
+<circle cx="456" cy="165" r="18" fill="#00d4f0" opacity="0.15" clip-path="url(#ic)"/>
+<!-- Orbit dot left -->
+<circle cx="224" cy="165" r="6" fill="#00d4f0" opacity="0.75" clip-path="url(#ic)"/>
+
+<!-- Caregiver heart (top right) -->
+<g clip-path="url(#ic)">
+  <path d="M396 118 C396 107 387 98 376 98 C371 98 367 100 364 104 C361 100 357 98 352 98 C341 98 332 107 332 118 C332 133 348 146 364 158 C380 146 396 133 396 118Z" fill="#ff3f62"/>
+  <ellipse cx="351" cy="107" rx="7" ry="5" fill="white" opacity="0.25" transform="rotate(-15 351 107)"/>
+</g>
+
+<!-- Pulse rings from heart -->
+<circle cx="364" cy="128" r="40" fill="none" stroke="#ff3f62" stroke-width="1.4" opacity="0.22" clip-path="url(#ic)"/>
+<circle cx="364" cy="128" r="56" fill="none" stroke="#ff3f62" stroke-width="0.9" opacity="0.12" clip-path="url(#ic)"/>
+
+<!-- Wordmark -->
+<text x="340" y="273" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="700" fill="#00d4f0" letter-spacing="5">TERRA CALL</text>
+</svg>
