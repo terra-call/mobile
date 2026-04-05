@@ -48,23 +48,64 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (isFirebaseConfigured && auth) {
       const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-        if (firebaseUser && db) {
-          try {
-            const snap = await getDoc(doc(db, "users", firebaseUser.uid));
-            if (snap.exists()) {
-              const data = snap.data();
-              setUser({
-                id: firebaseUser.uid,
-                email: firebaseUser.email ?? "",
-                name: data.name ?? "",
-                role: (data.role as UserRole) ?? "caregiver",
-                phone: data.phone ?? undefined,
-              });
+        if (firebaseUser) {
+          if (db) {
+            try {
+              const snap = await getDoc(doc(db, "users", firebaseUser.uid));
+              if (snap.exists()) {
+                const data = snap.data();
+                const userData: User = {
+                  id: firebaseUser.uid,
+                  email: firebaseUser.email ?? "",
+                  name: data.name ?? "",
+                  role: (data.role as UserRole) ?? "caregiver",
+                  phone: data.phone ?? undefined,
+                };
+                // Keep cache fresh for fallback
+                await AsyncStorage.setItem(USER_KEY, JSON.stringify(userData));
+                setUser(userData);
+              } else {
+                // Firestore doc missing (rules not configured, or race condition).
+                // Fall back to AsyncStorage cache if the UID matches.
+                const cached = await AsyncStorage.getItem(USER_KEY);
+                if (cached) {
+                  const cachedUser: User = JSON.parse(cached);
+                  if (cachedUser.id === firebaseUser.uid) {
+                    setUser(cachedUser);
+                  } else {
+                    setUser(null);
+                  }
+                } else {
+                  setUser(null);
+                }
+              }
+            } catch {
+              // Firestore read failed (permission denied etc) — try cache fallback
+              const cached = await AsyncStorage.getItem(USER_KEY);
+              if (cached) {
+                const cachedUser: User = JSON.parse(cached);
+                if (cachedUser.id === firebaseUser.uid) {
+                  setUser(cachedUser);
+                } else {
+                  setUser(null);
+                }
+              } else {
+                setUser(null);
+              }
+            }
+          } else {
+            // Firestore not available — try cache
+            const cached = await AsyncStorage.getItem(USER_KEY);
+            if (cached) {
+              const cachedUser: User = JSON.parse(cached);
+              if (cachedUser.id === firebaseUser.uid) {
+                setUser(cachedUser);
+              } else {
+                setUser(null);
+              }
             } else {
               setUser(null);
             }
-          } catch {
-            setUser(null);
           }
         } else {
           setUser(null);
@@ -83,6 +124,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const login = useCallback(async (email: string, password: string) => {
     if (isFirebaseConfigured && auth) {
       await signInWithEmailAndPassword(auth, email.trim(), password);
+      // onAuthStateChanged handles setting user state after sign-in
     } else {
       const raw = await AsyncStorage.getItem(USERS_KEY);
       const users: StoredUser[] = raw ? JSON.parse(raw) : [];
@@ -101,32 +143,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Step 1: Create Firebase Auth account — if this throws, registration fails.
       const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
 
-      // Step 2: Write Firestore profile — non-fatal so the account is still usable
-      // if security rules haven't been configured yet.
-      try {
-        await setDoc(doc(db, "users", cred.user.uid), {
-          email: email.trim(),
-          name,
-          role,
-          phone: phone ?? "",
-          status: role === "care-receiver" ? "unknown" : null,
-          lastCheckIn: null,
-          location: null,
-          createdAt: serverTimestamp(),
-        });
-      } catch (fsErr) {
-        console.warn("[Terra] Firestore profile write failed:", fsErr);
-      }
-
-      // Manually set user to avoid race condition: onAuthStateChanged fires
-      // before setDoc completes, finds no document, and resets user to null.
-      setUser({
+      const userData: User = {
         id: cred.user.uid,
         email: email.trim(),
         name,
         role,
         phone: phone || undefined,
-      });
+      };
+
+      // Step 2: Cache to AsyncStorage immediately so login always works
+      // even if the Firestore write fails (rules not yet configured).
+      await AsyncStorage.setItem(USER_KEY, JSON.stringify(userData));
+
+      // Step 3: Write Firestore profile — non-fatal.
+      if (db) {
+        try {
+          await setDoc(doc(db, "users", cred.user.uid), {
+            email: email.trim(),
+            name,
+            role,
+            phone: phone ?? "",
+            status: role === "care-receiver" ? "unknown" : null,
+            lastCheckIn: null,
+            location: null,
+            createdAt: serverTimestamp(),
+          });
+        } catch (fsErr) {
+          console.warn("[Terra] Firestore profile write failed — using cache:", fsErr);
+        }
+      }
+
+      // Step 4: Set user state (bypasses onAuthStateChanged race condition).
+      setUser(userData);
     } else {
       const raw = await AsyncStorage.getItem(USERS_KEY);
       const users: StoredUser[] = raw ? JSON.parse(raw) : [];
@@ -149,6 +197,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = useCallback(async () => {
     if (isFirebaseConfigured && auth) {
+      await AsyncStorage.removeItem(USER_KEY);
       await signOut(auth);
     } else {
       await AsyncStorage.removeItem(USER_KEY);
