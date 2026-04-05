@@ -17,13 +17,25 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useColors } from "@/hooks/useColors";
 
 export default function LoginScreen() {
-  const { login } = useAuth();
+  const { user, login } = useAuth();
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const passwordRef = useRef<TextInput>(null);
+
+  // Navigate as soon as user state is populated (works for both direct login
+  // and the async onAuthStateChanged path that fires after signInWithEmailAndPassword)
+  React.useEffect(() => {
+    if (user) {
+      if (user.role === "care-receiver") {
+        router.replace("/(care-receiver)/");
+      } else {
+        router.replace("/(caregiver)/");
+      }
+    }
+  }, [user]);
 
   const topPadding = Platform.OS === "web" ? 67 : insets.top;
   const bottomPadding = Platform.OS === "web" ? 34 : insets.bottom;
@@ -37,7 +49,22 @@ export default function LoginScreen() {
     try {
       await login(email.trim(), password);
     } catch (err: unknown) {
-      Alert.alert("Login Failed", err instanceof Error ? err.message : "Invalid credentials");
+      const code = (err as { code?: string })?.code ?? "";
+      let message = "Could not sign in. Please try again.";
+      if (code === "auth/invalid-credential" || code === "auth/wrong-password" || code === "auth/user-not-found") {
+        message = "Incorrect email or password.";
+      } else if (code === "auth/invalid-email") {
+        message = "Please enter a valid email address.";
+      } else if (code === "auth/network-request-failed") {
+        message = "Network error — check your connection and try again.";
+      } else if (code === "auth/too-many-requests") {
+        message = "Too many attempts. Please wait a moment and try again.";
+      } else if (code === "auth/user-disabled") {
+        message = "This account has been disabled. Please contact support.";
+      } else if (err instanceof Error && err.message) {
+        message = err.message;
+      }
+      Alert.alert("Login Failed", message);
     } finally {
       setLoading(false);
     }
