@@ -49,6 +49,7 @@ export default function LoginScreen() {
       behavior={Platform.OS === "ios" ? "padding" : "height"}
     >
       <ScrollView
+        style={{ backgroundColor: colors.background }}
         contentContainerStyle={[
           styles.container,
           { paddingTop: topPadding + 32, paddingBottom: bottomPadding + 24 },

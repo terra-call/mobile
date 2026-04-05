@@ -140,6 +140,7 @@ export default function RegisterScreen() {
       behavior={Platform.OS === "ios" ? "padding" : "height"}
     >
       <ScrollView
+        style={{ backgroundColor: "#060a18" }}
         contentContainerStyle={[
           styles.detailsScroll,
           { paddingTop: topPadding + 20, paddingBottom: bottomPadding + 24 },
