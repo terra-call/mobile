@@ -122,8 +122,53 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = useCallback(async (email: string, password: string) => {
     if (isFirebaseConfigured && auth) {
-      await signInWithEmailAndPassword(auth, email.trim(), password);
-      // onAuthStateChanged takes over from here and calls setUser
+      // Step 1: Authenticate with Firebase — throws on bad credentials
+      const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
+      const firebaseUser = cred.user;
+
+      // Step 2: Load profile immediately (don't wait for onAuthStateChanged)
+      let userData: User | null = null;
+
+      if (db) {
+        try {
+          const snap = await getDoc(doc(db, "users", firebaseUser.uid));
+          if (snap.exists()) {
+            const data = snap.data();
+            userData = {
+              id: firebaseUser.uid,
+              email: firebaseUser.email ?? "",
+              name: data.name ?? "",
+              role: (data.role as UserRole) ?? "caregiver",
+              phone: data.phone ?? undefined,
+            };
+            // Keep the cache fresh for future fallback
+            await writeProfileCache(firebaseUser.uid, userData);
+          }
+        } catch (fsErr) {
+          console.warn("[Terra] Firestore fetch during login failed:", fsErr);
+        }
+      }
+
+      // Step 3: If Firestore had no document, try the persistent cache
+      if (!userData) {
+        const cache = await readProfileCache();
+        userData = cache[firebaseUser.uid] ?? null;
+      }
+
+      // Step 4: If we still have nothing, we cannot determine the user's role.
+      // Sign out and surface a clear error rather than silently failing.
+      if (!userData) {
+        await signOut(auth);
+        throw Object.assign(
+          new Error(
+            "Your account was found but your profile is missing from this device. " +
+            "Please register again or try on the device you originally signed up with."
+          ),
+          { code: "terra/profile-missing" }
+        );
+      }
+
+      setUser(userData);
     } else {
       const raw = await AsyncStorage.getItem(USERS_KEY);
       const users: StoredUser[] = raw ? JSON.parse(raw) : [];
