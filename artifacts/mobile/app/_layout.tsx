@@ -74,6 +74,10 @@ function RootLayoutNav() {
           name="emergency-call"
           options={{ presentation: "fullScreenModal", animation: "fade" }}
         />
+        <Stack.Screen
+          name="caregiver-settings"
+          options={{ animation: "slide_from_right" }}
+        />
       </Stack>
     </>
   );

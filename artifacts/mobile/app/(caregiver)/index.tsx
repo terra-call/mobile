@@ -88,8 +88,11 @@ export default function CaregiverDashboard() {
               { backgroundColor: counts.emergency > 0 ? colors.destructive : colors.primary },
             ]}
           />
+          <Pressable onPress={() => router.push("/caregiver-settings")} hitSlop={10}>
+            <Feather name="settings" size={20} color={colors.mutedForeground} />
+          </Pressable>
           <Pressable onPress={handleLogout} hitSlop={10}>
-            <Feather name="log-out" size={20} color={colors.mutedForeground} />
+            <Text style={[styles.logOutText, { color: colors.mutedForeground }]}>Log Out</Text>
           </Pressable>
         </View>
       </View>
@@ -183,6 +186,7 @@ const styles = StyleSheet.create({
   headerSub: { fontSize: 12, marginTop: 2, fontFamily: "Inter_400Regular" },
   headerRight: { flexDirection: "row", alignItems: "center", gap: 14 },
   statusDot: { width: 8, height: 8, borderRadius: 4 },
+  logOutText: { fontSize: 14, fontWeight: "600", fontFamily: "Inter_600SemiBold" },
   statsRow: {
     flexDirection: "row",
     borderTopWidth: 1,
