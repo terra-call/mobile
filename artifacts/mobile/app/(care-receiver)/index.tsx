@@ -1,6 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import * as Haptics from "expo-haptics";
+import { router } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
   Alert,
@@ -237,9 +238,14 @@ export default function CareReceiverHome() {
             </Text>
           </View>
         </View>
-        <Pressable onPress={handleLogout} hitSlop={12}>
-          <Feather name="log-out" size={20} color={colors.mutedForeground} />
-        </Pressable>
+        <View style={styles.headerActions}>
+          <Pressable onPress={() => router.push("/(care-receiver)/settings")} hitSlop={10}>
+            <Feather name="settings" size={20} color={colors.mutedForeground} />
+          </Pressable>
+          <Pressable onPress={handleLogout} hitSlop={10}>
+            <Text style={[styles.logOutText, { color: colors.mutedForeground }]}>Log Out</Text>
+          </Pressable>
+        </View>
       </View>
 
       <View style={styles.content}>
@@ -330,6 +336,8 @@ const styles = StyleSheet.create({
     paddingVertical: 11,
   },
   emergencyHelpText: { fontSize: 14, fontWeight: "600", fontFamily: "Inter_600SemiBold" },
+  headerActions: { flexDirection: "row", alignItems: "center", gap: 18 },
+  logOutText: { fontSize: 14, fontWeight: "600", fontFamily: "Inter_600SemiBold" },
 });
 
 const eStyles = StyleSheet.create({
