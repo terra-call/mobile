@@ -27,22 +27,25 @@ interface RegisterData {
   phone?: string;
 }
 
+export interface PendingRecovery {
+  uid: string;
+  email: string;
+}
+
 interface AuthContextValue {
   user: User | null;
   loading: boolean;
+  pendingRecovery: PendingRecovery | null;
   login: (email: string, password: string) => Promise<void>;
   register: (data: RegisterData) => Promise<void>;
+  recoverProfile: (data: { name: string; role: UserRole; phone?: string }) => Promise<void>;
   logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-// Current session key (cleared on logout)
 const SESSION_KEY = "@terra:session";
-// Persistent UID-indexed profile cache (survives logout so re-login works
-// even when Firestore rules haven't been configured yet)
 const PROFILE_CACHE_KEY = "@terra:profiles";
-// Fallback user store for when Firebase is not configured
 const USERS_KEY = "@terra:users";
 type StoredUser = User & { password: string };
 
@@ -68,12 +71,14 @@ async function writeProfileCache(uid: string, userData: User): Promise<void> {
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [pendingRecovery, setPendingRecovery] = useState<PendingRecovery | null>(null);
 
+  // Restore session on app launch via onAuthStateChanged
   useEffect(() => {
     if (isFirebaseConfigured && auth) {
       const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
         if (firebaseUser) {
-          // 1. Try Firestore first
+          // Try Firestore first
           if (db) {
             try {
               const snap = await getDoc(doc(db, "users", firebaseUser.uid));
@@ -86,23 +91,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   role: (data.role as UserRole) ?? "caregiver",
                   phone: data.phone ?? undefined,
                 };
-                // Keep the persistent cache fresh
                 await writeProfileCache(firebaseUser.uid, userData);
                 setUser(userData);
                 setLoading(false);
                 return;
               }
             } catch {
-              // permission-denied or network — fall through to cache
+              // permission-denied or network — fall through
             }
           }
 
-          // 2. Fall back to the persistent profile cache
+          // Try the persistent profile cache
           const cache = await readProfileCache();
           const cachedUser = cache[firebaseUser.uid];
           if (cachedUser) {
             setUser(cachedUser);
           } else {
+            // Firebase Auth session exists but no profile anywhere.
+            // Set pendingRecovery so the app can prompt the user to complete setup.
+            setPendingRecovery({ uid: firebaseUser.uid, email: firebaseUser.email ?? "" });
             setUser(null);
           }
         } else {
@@ -112,7 +119,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
       return unsubscribe;
     } else {
-      // No Firebase — use local session
       AsyncStorage.getItem(SESSION_KEY)
         .then((val) => { if (val) setUser(JSON.parse(val)); })
         .catch(() => {})
@@ -122,11 +128,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = useCallback(async (email: string, password: string) => {
     if (isFirebaseConfigured && auth) {
-      // Step 1: Authenticate with Firebase — throws on bad credentials
+      // Step 1: Authenticate — throws on wrong credentials
       const cred = await signInWithEmailAndPassword(auth, email.trim(), password);
       const firebaseUser = cred.user;
 
-      // Step 2: Load profile immediately (don't wait for onAuthStateChanged)
+      // Step 2: Load profile immediately (don't rely on onAuthStateChanged callback)
       let userData: User | null = null;
 
       if (db) {
@@ -141,7 +147,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               role: (data.role as UserRole) ?? "caregiver",
               phone: data.phone ?? undefined,
             };
-            // Keep the cache fresh for future fallback
             await writeProfileCache(firebaseUser.uid, userData);
           }
         } catch (fsErr) {
@@ -149,25 +154,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      // Step 3: If Firestore had no document, try the persistent cache
+      // Step 3: Fall back to persistent cache
       if (!userData) {
         const cache = await readProfileCache();
         userData = cache[firebaseUser.uid] ?? null;
       }
 
-      // Step 4: If we still have nothing, we cannot determine the user's role.
-      // Sign out and surface a clear error rather than silently failing.
+      // Step 4: Profile missing — keep Firebase Auth session alive so recovery
+      // can write the Firestore document without re-authenticating.
       if (!userData) {
-        await signOut(auth);
-        throw Object.assign(
-          new Error(
-            "Your account was found but your profile is missing from this device. " +
-            "Please register again or try on the device you originally signed up with."
-          ),
-          { code: "terra/profile-missing" }
-        );
+        setPendingRecovery({ uid: firebaseUser.uid, email: firebaseUser.email ?? email.trim() });
+        throw Object.assign(new Error("profile-missing"), { code: "terra/profile-missing" });
       }
 
+      setPendingRecovery(null);
       setUser(userData);
     } else {
       const raw = await AsyncStorage.getItem(USERS_KEY);
@@ -182,9 +182,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  const recoverProfile = useCallback(async ({
+    name,
+    role,
+    phone,
+  }: {
+    name: string;
+    role: UserRole;
+    phone?: string;
+  }) => {
+    if (!pendingRecovery) throw new Error("No pending recovery session");
+    const { uid, email } = pendingRecovery;
+
+    const userData: User = { id: uid, email, name, role, phone: phone || undefined };
+
+    // Write to Firestore (rules are now fixed)
+    if (db) {
+      await setDoc(doc(db, "users", uid), {
+        email,
+        name,
+        role,
+        phone: phone ?? "",
+        status: role === "care-receiver" ? "unknown" : null,
+        lastCheckIn: null,
+        location: null,
+        createdAt: serverTimestamp(),
+      });
+    }
+
+    await writeProfileCache(uid, userData);
+    setPendingRecovery(null);
+    setUser(userData);
+  }, [pendingRecovery]);
+
   const register = useCallback(async ({ email, password, name, role, phone }: RegisterData) => {
     if (isFirebaseConfigured && auth && db) {
-      // Step 1: Create Firebase Auth account
       const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
 
       const userData: User = {
@@ -195,10 +227,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         phone: phone || undefined,
       };
 
-      // Step 2: Persist to the profile cache immediately (survives logout)
       await writeProfileCache(cred.user.uid, userData);
 
-      // Step 3: Write Firestore profile — non-fatal if rules not configured yet
       try {
         await setDoc(doc(db, "users", cred.user.uid), {
           email: email.trim(),
@@ -214,7 +244,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.warn("[Terra] Firestore profile write failed — using cache:", fsErr);
       }
 
-      // Step 4: Set user state immediately (avoids onAuthStateChanged race)
+      setPendingRecovery(null);
       setUser(userData);
     } else {
       const raw = await AsyncStorage.getItem(USERS_KEY);
@@ -237,9 +267,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    setPendingRecovery(null);
     if (isFirebaseConfigured && auth) {
-      // Clear the session marker but keep the profile cache so
-      // the user can sign back in without Firestore being available
       await AsyncStorage.removeItem(SESSION_KEY);
       setUser(null);
       await signOut(auth);
@@ -250,7 +279,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout }}>
+    <AuthContext.Provider value={{ user, loading, pendingRecovery, login, register, recoverProfile, logout }}>
       {children}
     </AuthContext.Provider>
   );

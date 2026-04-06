@@ -1,5 +1,5 @@
 import { Feather } from "@expo/vector-icons";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import React, { useRef, useState } from "react";
 import {
   Alert,
@@ -52,7 +52,9 @@ const ROLE_OPTIONS: RoleOption[] = [
 ];
 
 export default function RegisterScreen() {
-  const { register } = useAuth();
+  const { register, recoverProfile, pendingRecovery, user } = useAuth();
+  const { mode } = useLocalSearchParams<{ mode?: string }>();
+  const isRecovery = mode === "recover";
   const colors = useColors();
   const insets = useSafeAreaInsets();
 
@@ -71,34 +73,61 @@ export default function RegisterScreen() {
   const topPadding = Platform.OS === "web" ? 67 : insets.top;
   const bottomPadding = Platform.OS === "web" ? 34 : insets.bottom;
 
+  // If already logged in (recovery completed), navigate away
+  React.useEffect(() => {
+    if (user) {
+      if (user.role === "care-receiver") {
+        router.replace("/(care-receiver)/");
+      } else {
+        router.replace("/(caregiver)/");
+      }
+    }
+  }, [user]);
+
   const handleRoleSelect = (role: UserRole) => {
     setSelectedRole(role);
     setStep("details");
   };
 
-  const handleRegister = async () => {
-    if (!name.trim() || !email.trim() || !password || !selectedRole) {
+  const handleSubmit = async () => {
+    if (!name.trim() || !selectedRole) {
       Alert.alert("Error", "Please fill in all required fields");
       return;
     }
-    if (password.length < 6) {
+    if (!isRecovery && (!email.trim() || !password)) {
+      Alert.alert("Error", "Please fill in all required fields");
+      return;
+    }
+    if (!isRecovery && password.length < 6) {
       Alert.alert("Error", "Password must be at least 6 characters");
       return;
     }
+
     setLoading(true);
     try {
-      await register({ email: email.trim(), password, name: name.trim(), role: selectedRole, phone: phone.trim() });
+      if (isRecovery) {
+        await recoverProfile({ name: name.trim(), role: selectedRole, phone: phone.trim() });
+      } else {
+        await register({
+          email: email.trim(),
+          password,
+          name: name.trim(),
+          role: selectedRole,
+          phone: phone.trim(),
+        });
+      }
     } catch (err: unknown) {
       const code = (err as { code?: string })?.code ?? "";
-      let message = "Could not create account. Please try again.";
+      let message = isRecovery
+        ? "Could not save your profile. Please try again."
+        : "Could not create account. Please try again.";
       if (code === "auth/email-already-in-use") message = "That email is already registered. Try signing in instead.";
       else if (code === "auth/invalid-email") message = "Please enter a valid email address.";
       else if (code === "auth/weak-password") message = "Password must be at least 6 characters.";
       else if (code === "auth/network-request-failed") message = "Network error — check your connection and try again.";
       else if (code === "auth/too-many-requests") message = "Too many attempts. Please wait a moment and try again.";
-      else if (code === "permission-denied") message = "Account created but profile save failed. Please contact support.";
       else if (err instanceof Error && err.message) message = err.message;
-      Alert.alert("Registration Failed", message);
+      Alert.alert(isRecovery ? "Setup Failed" : "Registration Failed", message);
     } finally {
       setLoading(false);
     }
@@ -109,13 +138,29 @@ export default function RegisterScreen() {
   if (step === "role") {
     return (
       <View style={[styles.container, { backgroundColor: colors.background, paddingTop: topPadding + 20 }]}>
-        <Pressable onPress={() => router.back()} style={styles.backBtn}>
+        <Pressable
+          onPress={() => (isRecovery ? router.replace("/login") : router.back())}
+          style={styles.backBtn}
+        >
           <Feather name="arrow-left" size={22} color={colors.mutedForeground} />
         </Pressable>
 
-        <Text style={[styles.stepTitle, { color: colors.text }]}>Who are you?</Text>
+        {isRecovery && pendingRecovery && (
+          <View style={[styles.recoveryBanner, { backgroundColor: "#00C8FF18", borderColor: "#00C8FF44" }]}>
+            <Feather name="info" size={15} color="#00C8FF" />
+            <Text style={[styles.recoveryBannerText, { color: "#00C8FF" }]}>
+              Completing setup for {pendingRecovery.email}
+            </Text>
+          </View>
+        )}
+
+        <Text style={[styles.stepTitle, { color: colors.text }]}>
+          {isRecovery ? "Complete Your Profile" : "Who are you?"}
+        </Text>
         <Text style={[styles.stepSubtitle, { color: colors.mutedForeground }]}>
-          Select your role to set up the right experience
+          {isRecovery
+            ? "Select your role to finish setting up your account"
+            : "Select your role to set up the right experience"}
         </Text>
 
         <View style={[styles.roleList, { paddingBottom: bottomPadding + 24 }]}>
@@ -172,46 +217,61 @@ export default function RegisterScreen() {
           </View>
         )}
 
-        <Text style={[styles.stepTitle, { color: colors.text }]}>Create account</Text>
+        <Text style={[styles.stepTitle, { color: colors.text }]}>
+          {isRecovery ? "Your Details" : "Create Account"}
+        </Text>
         <Text style={[styles.stepSubtitle, { color: colors.mutedForeground }]}>
-          Your information is kept private and secure
+          {isRecovery
+            ? "Enter your name and we'll save your profile"
+            : "Your information is kept private and secure"}
         </Text>
 
         <View style={styles.form}>
-          {[
-            { label: "Full Name *", value: name, setter: setName, placeholder: "Margaret Johnson", next: emailRef, keyboard: "default" as const, secure: false },
-          ].map(({ label, value, setter, placeholder, next, keyboard, secure }) => (
-            <View key={label}>
-              <Text style={[styles.label, { color: colors.mutedForeground }]}>{label}</Text>
-              <TextInput
-                style={[styles.input, { backgroundColor: colors.card, borderColor: colors.border, color: colors.text }]}
-                placeholder={placeholder}
-                placeholderTextColor={colors.mutedForeground}
-                value={value}
-                onChangeText={setter}
-                keyboardType={keyboard}
-                returnKeyType="next"
-                onSubmitEditing={() => (next as React.RefObject<TextInput>).current?.focus()}
-                secureTextEntry={secure}
-              />
-            </View>
-          ))}
-
           <View>
-            <Text style={[styles.label, { color: colors.mutedForeground }]}>Email Address *</Text>
+            <Text style={[styles.label, { color: colors.mutedForeground }]}>Full Name *</Text>
             <TextInput
-              ref={emailRef}
               style={[styles.input, { backgroundColor: colors.card, borderColor: colors.border, color: colors.text }]}
-              placeholder="your@email.com"
+              placeholder="Margaret Johnson"
               placeholderTextColor={colors.mutedForeground}
-              value={email}
-              onChangeText={setEmail}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              returnKeyType="next"
+              value={name}
+              onChangeText={setName}
+              returnKeyType={isRecovery ? "next" : "next"}
               onSubmitEditing={() => phoneRef.current?.focus()}
             />
           </View>
+
+          {/* Email/Password only for new accounts, not recovery */}
+          {!isRecovery && (
+            <>
+              <View>
+                <Text style={[styles.label, { color: colors.mutedForeground }]}>Email Address *</Text>
+                <TextInput
+                  ref={emailRef}
+                  style={[styles.input, { backgroundColor: colors.card, borderColor: colors.border, color: colors.text }]}
+                  placeholder="your@email.com"
+                  placeholderTextColor={colors.mutedForeground}
+                  value={email}
+                  onChangeText={setEmail}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  returnKeyType="next"
+                  onSubmitEditing={() => phoneRef.current?.focus()}
+                />
+              </View>
+            </>
+          )}
+
+          {/* Show account email as read-only in recovery mode */}
+          {isRecovery && pendingRecovery && (
+            <View>
+              <Text style={[styles.label, { color: colors.mutedForeground }]}>Account Email</Text>
+              <View style={[styles.input, styles.readOnlyInput, { backgroundColor: colors.card + "80", borderColor: colors.border }]}>
+                <Text style={[styles.readOnlyText, { color: colors.mutedForeground }]}>
+                  {pendingRecovery.email}
+                </Text>
+              </View>
+            </View>
+          )}
 
           <View>
             <Text style={[styles.label, { color: colors.mutedForeground }]}>Phone Number</Text>
@@ -223,46 +283,52 @@ export default function RegisterScreen() {
               value={phone}
               onChangeText={setPhone}
               keyboardType="phone-pad"
-              returnKeyType="next"
-              onSubmitEditing={() => passwordRef.current?.focus()}
+              returnKeyType={isRecovery ? "done" : "next"}
+              onSubmitEditing={isRecovery ? handleSubmit : () => passwordRef.current?.focus()}
             />
           </View>
 
-          <View>
-            <Text style={[styles.label, { color: colors.mutedForeground }]}>Password *</Text>
-            <TextInput
-              ref={passwordRef}
-              style={[styles.input, { backgroundColor: colors.card, borderColor: colors.border, color: colors.text }]}
-              placeholder="Minimum 6 characters"
-              placeholderTextColor={colors.mutedForeground}
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-              returnKeyType="done"
-              onSubmitEditing={handleRegister}
-            />
-          </View>
+          {!isRecovery && (
+            <View>
+              <Text style={[styles.label, { color: colors.mutedForeground }]}>Password *</Text>
+              <TextInput
+                ref={passwordRef}
+                style={[styles.input, { backgroundColor: colors.card, borderColor: colors.border, color: colors.text }]}
+                placeholder="Minimum 6 characters"
+                placeholderTextColor={colors.mutedForeground}
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry
+                returnKeyType="done"
+                onSubmitEditing={handleSubmit}
+              />
+            </View>
+          )}
 
           <Pressable
             style={[
               styles.registerButton,
               { backgroundColor: loading ? colors.muted : colors.primary, shadowColor: colors.primary },
             ]}
-            onPress={handleRegister}
+            onPress={handleSubmit}
             disabled={loading}
           >
             <Text style={[styles.registerButtonText, { color: colors.primaryForeground }]}>
-              {loading ? "Creating Account..." : "Create Account"}
+              {loading
+                ? isRecovery ? "Saving Profile..." : "Creating Account..."
+                : isRecovery ? "Save Profile" : "Create Account"}
             </Text>
           </Pressable>
         </View>
 
-        <View style={styles.loginLink}>
-          <Text style={[styles.loginLinkText, { color: colors.mutedForeground }]}>Already have an account? </Text>
-          <Pressable onPress={() => router.replace("/login")}>
-            <Text style={[styles.loginLinkAction, { color: colors.accent }]}>Sign In</Text>
-          </Pressable>
-        </View>
+        {!isRecovery && (
+          <View style={styles.loginLink}>
+            <Text style={[styles.loginLinkText, { color: colors.mutedForeground }]}>Already have an account? </Text>
+            <Pressable onPress={() => router.replace("/login")}>
+              <Text style={[styles.loginLinkAction, { color: colors.accent }]}>Sign In</Text>
+            </Pressable>
+          </View>
+        )}
       </ScrollView>
     </KeyboardAvoidingView>
   );
@@ -272,6 +338,16 @@ const styles = StyleSheet.create({
   container: { flex: 1, paddingHorizontal: 24 },
   detailsScroll: { flexGrow: 1, paddingHorizontal: 24 },
   backBtn: { marginBottom: 24, alignSelf: "flex-start" },
+  recoveryBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginBottom: 20,
+  },
+  recoveryBannerText: { fontSize: 13, fontFamily: "Inter_400Regular", flex: 1 },
   stepTitle: { fontSize: 28, fontWeight: "700", fontFamily: "Inter_700Bold", marginBottom: 8 },
   stepSubtitle: { fontSize: 14, lineHeight: 22, marginBottom: 32, fontFamily: "Inter_400Regular" },
   roleList: { gap: 14, flex: 1, justifyContent: "center" },
@@ -309,6 +385,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     paddingHorizontal: 16,
     paddingVertical: Platform.OS === "ios" ? 15 : 12,
+    fontSize: 16,
+    fontFamily: "Inter_400Regular",
+  },
+  readOnlyInput: {
+    justifyContent: "center",
+  },
+  readOnlyText: {
     fontSize: 16,
     fontFamily: "Inter_400Regular",
   },

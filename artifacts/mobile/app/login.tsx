@@ -50,6 +50,23 @@ export default function LoginScreen() {
       await login(email.trim(), password);
     } catch (err: unknown) {
       const code = (err as { code?: string })?.code ?? "";
+
+      if (code === "terra/profile-missing") {
+        // Firebase Auth succeeded but profile is missing — route to recovery
+        Alert.alert(
+          "Profile Setup Required",
+          "Your account was found but your profile wasn't saved. Tap 'Complete Setup' to finish creating your profile.",
+          [
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "Complete Setup",
+              onPress: () => router.push("/register?mode=recover"),
+            },
+          ]
+        );
+        return;
+      }
+
       let message = "Could not sign in. Please try again.";
       if (code === "auth/invalid-credential" || code === "auth/wrong-password" || code === "auth/user-not-found") {
         message = "Incorrect email or password.";
