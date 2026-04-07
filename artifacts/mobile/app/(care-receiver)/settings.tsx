@@ -26,6 +26,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
@@ -34,6 +35,13 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/contexts/AuthContext";
 import { useColors } from "@/hooks/useColors";
 import { auth, db, isFirebaseConfigured } from "@/services/firebase";
+import {
+  type ScheduleType,
+  scheduleCheckInReminders,
+  cancelAllReminders,
+  DEFAULT_NOTIFICATION_SETTINGS,
+  type NotificationSettings,
+} from "@/services/notifications";
 
 interface PermittedCaregiver {
   id: string;
@@ -68,10 +76,21 @@ export default function SettingsScreen() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviting, setInviting] = useState(false);
 
-  // ── Load permitted caregivers ─────────────────────────────────────────────
+  // Notification settings
+  const [notifEnabled, setNotifEnabled] = useState(DEFAULT_NOTIFICATION_SETTINGS.enabled);
+  const [scheduleType, setScheduleType] = useState<ScheduleType>(DEFAULT_NOTIFICATION_SETTINGS.schedule.type);
+  const [customHour, setCustomHour] = useState(DEFAULT_NOTIFICATION_SETTINGS.schedule.customHour);
+  const [customMinute, setCustomMinute] = useState(DEFAULT_NOTIFICATION_SETTINGS.schedule.customMinute);
+  const [missedWindow, setMissedWindow] = useState(String(DEFAULT_NOTIFICATION_SETTINGS.missedWindowMin));
+  const [escalationWindow, setEscalationWindow] = useState(String(DEFAULT_NOTIFICATION_SETTINGS.escalationWindowMin));
+  const [notifSaving, setNotifSaving] = useState(false);
+  const [notifLoading, setNotifLoading] = useState(true);
+
+  // ── Load permitted caregivers + notification settings ─────────────────────
   useEffect(() => {
     if (!user || !isFirebaseConfigured || !db) {
       setCaregiversLoading(false);
+      setNotifLoading(false);
       return;
     }
     getDoc(doc(db, "users", user.id))
@@ -79,10 +98,33 @@ export default function SettingsScreen() {
         if (snap.exists()) {
           const data = snap.data();
           setCaregivers((data.permittedCaregivers as PermittedCaregiver[]) ?? []);
+
+          // Load notification settings if they exist
+          if (data.notificationsEnabled !== undefined) {
+            setNotifEnabled(data.notificationsEnabled as boolean);
+          }
+          if (data.checkInScheduleType) {
+            setScheduleType(data.checkInScheduleType as ScheduleType);
+          }
+          if (data.checkInCustomHour !== undefined) {
+            setCustomHour(data.checkInCustomHour as number);
+          }
+          if (data.checkInCustomMinute !== undefined) {
+            setCustomMinute(data.checkInCustomMinute as number);
+          }
+          if (data.missedWindowMin !== undefined) {
+            setMissedWindow(String(data.missedWindowMin));
+          }
+          if (data.escalationWindowMin !== undefined) {
+            setEscalationWindow(String(data.escalationWindowMin));
+          }
         }
       })
       .catch(() => {})
-      .finally(() => setCaregiversLoading(false));
+      .finally(() => {
+        setCaregiversLoading(false);
+        setNotifLoading(false);
+      });
   }, [user]);
 
   // ── Save profile (name + phone) ───────────────────────────────────────────
@@ -207,6 +249,61 @@ export default function SettingsScreen() {
       Alert.alert("Error", "Could not add caregiver. Please try again.");
     } finally {
       setInviting(false);
+    }
+  };
+
+  // ── Save notification settings ────────────────────────────────────────────
+  const saveNotificationSettings = async () => {
+    if (!user || !isFirebaseConfigured || !db) return;
+
+    const missedNum = parseInt(missedWindow, 10);
+    const escalationNum = parseInt(escalationWindow, 10);
+
+    if (isNaN(missedNum) || missedNum < 1 || missedNum > 480) {
+      Alert.alert("Invalid Value", "Missed check-in window must be between 1 and 480 minutes.");
+      return;
+    }
+    if (isNaN(escalationNum) || escalationNum <= missedNum) {
+      Alert.alert("Invalid Value", "Escalation window must be greater than the missed check-in window.");
+      return;
+    }
+
+    if (scheduleType === "custom") {
+      if (customHour < 0 || customHour > 23 || customMinute < 0 || customMinute > 59) {
+        Alert.alert("Invalid Time", "Enter a valid hour (0–23) and minute (0–59).");
+        return;
+      }
+    }
+
+    setNotifSaving(true);
+    try {
+      await updateDoc(doc(db, "users", user.id), {
+        notificationsEnabled: notifEnabled,
+        checkInScheduleType: scheduleType,
+        checkInCustomHour: customHour,
+        checkInCustomMinute: customMinute,
+        missedWindowMin: missedNum,
+        escalationWindowMin: escalationNum,
+      });
+
+      const settings: NotificationSettings = {
+        enabled: notifEnabled,
+        schedule: { type: scheduleType, customHour, customMinute },
+        missedWindowMin: missedNum,
+        escalationWindowMin: escalationNum,
+      };
+
+      if (notifEnabled) {
+        await scheduleCheckInReminders(settings);
+        Alert.alert("Saved", "Check-in reminders have been scheduled.");
+      } else {
+        await cancelAllReminders();
+        Alert.alert("Saved", "Notification settings saved. Reminders are disabled.");
+      }
+    } catch {
+      Alert.alert("Error", "Could not save notification settings.");
+    } finally {
+      setNotifSaving(false);
     }
   };
 
@@ -349,6 +446,120 @@ export default function SettingsScreen() {
             color="#00C8FF"
             textColor="#060a18"
           />
+        </Section>
+
+        {/* ── Notifications Section ── */}
+        <Section title="NOTIFICATIONS" colors={colors}>
+          {notifLoading ? (
+            <ActivityIndicator color={colors.primary} style={{ marginVertical: 12 }} />
+          ) : (
+            <>
+              {/* Enable toggle */}
+              <View style={[styles.notifToggleRow, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <View style={{ flex: 1, gap: 3 }}>
+                  <Text style={[styles.notifToggleLabel, { color: colors.text }]}>Enable check-in reminders</Text>
+                  <Text style={[styles.notifToggleSub, { color: colors.mutedForeground }]}>
+                    Get reminded to tap I'M OK on a schedule
+                  </Text>
+                </View>
+                <Switch
+                  value={notifEnabled}
+                  onValueChange={setNotifEnabled}
+                  trackColor={{ false: colors.border, true: colors.primary }}
+                  thumbColor="#ffffff"
+                />
+              </View>
+
+              {/* Frequency chips */}
+              <Field label="Check-in frequency" colors={colors}>
+                <View style={styles.chipRow}>
+                  {(["4h", "8h", "12h", "24h", "custom"] as ScheduleType[]).map((opt) => {
+                    const active = scheduleType === opt;
+                    const label = opt === "custom" ? "Custom time" : `Every ${opt}`;
+                    return (
+                      <Pressable
+                        key={opt}
+                        onPress={() => setScheduleType(opt)}
+                        style={[
+                          styles.chip,
+                          {
+                            backgroundColor: active ? colors.primary : colors.card,
+                            borderColor: active ? colors.primary : colors.border,
+                          },
+                        ]}
+                      >
+                        <Text style={[styles.chipText, { color: active ? colors.primaryForeground : colors.mutedForeground }]}>
+                          {label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </Field>
+
+              {/* Custom time inputs */}
+              {scheduleType === "custom" && (
+                <Field label="Daily reminder time (24h format)" colors={colors}>
+                  <View style={styles.timeRow}>
+                    <TextInput
+                      style={[styles.input, styles.timeInput, { backgroundColor: colors.card, borderColor: colors.border, color: colors.text }]}
+                      value={String(customHour).padStart(2, "0")}
+                      onChangeText={(v) => setCustomHour(Math.max(0, Math.min(23, parseInt(v, 10) || 0)))}
+                      keyboardType="number-pad"
+                      maxLength={2}
+                      placeholder="HH"
+                      placeholderTextColor={colors.mutedForeground}
+                    />
+                    <Text style={[styles.timeSep, { color: colors.text }]}>:</Text>
+                    <TextInput
+                      style={[styles.input, styles.timeInput, { backgroundColor: colors.card, borderColor: colors.border, color: colors.text }]}
+                      value={String(customMinute).padStart(2, "0")}
+                      onChangeText={(v) => setCustomMinute(Math.max(0, Math.min(59, parseInt(v, 10) || 0)))}
+                      keyboardType="number-pad"
+                      maxLength={2}
+                      placeholder="MM"
+                      placeholderTextColor={colors.mutedForeground}
+                    />
+                  </View>
+                </Field>
+              )}
+
+              {/* Alert windows */}
+              <Field label="Missed check-in alert after (minutes)" colors={colors}>
+                <TextInput
+                  style={[styles.input, { backgroundColor: colors.card, borderColor: colors.border, color: colors.text }]}
+                  value={missedWindow}
+                  onChangeText={setMissedWindow}
+                  keyboardType="number-pad"
+                  placeholder="15"
+                  placeholderTextColor={colors.mutedForeground}
+                />
+              </Field>
+
+              <Field label="Emergency escalation after (minutes)" colors={colors}>
+                <TextInput
+                  style={[styles.input, { backgroundColor: colors.card, borderColor: colors.border, color: colors.text }]}
+                  value={escalationWindow}
+                  onChangeText={setEscalationWindow}
+                  keyboardType="number-pad"
+                  placeholder="30"
+                  placeholderTextColor={colors.mutedForeground}
+                />
+              </Field>
+
+              <Text style={[styles.inviteHint, { color: colors.mutedForeground }]}>
+                If you miss a check-in, your caregivers will be alerted after the missed window. The emergency escalation window triggers a higher-priority alert.
+              </Text>
+
+              <SaveButton
+                label="Save Notification Settings"
+                loading={notifSaving}
+                onPress={saveNotificationSettings}
+                color={colors.primary}
+                textColor={colors.primaryForeground}
+              />
+            </>
+          )}
         </Section>
 
         {/* ── My Caregivers Section ── */}
@@ -579,6 +790,31 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   emptyText: { fontSize: 14, fontFamily: "Inter_400Regular" },
+
+  notifToggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 14,
+    gap: 12,
+    marginBottom: 2,
+  },
+  notifToggleLabel: { fontSize: 15, fontWeight: "600", fontFamily: "Inter_600SemiBold" },
+  notifToggleSub: { fontSize: 12, fontFamily: "Inter_400Regular" },
+
+  chipRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  chip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+  },
+  chipText: { fontSize: 13, fontFamily: "Inter_500Medium" },
+
+  timeRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  timeInput: { width: 64, textAlign: "center" },
+  timeSep: { fontSize: 22, fontWeight: "600", fontFamily: "Inter_600SemiBold" },
 
   caregiverRow: {
     flexDirection: "row",

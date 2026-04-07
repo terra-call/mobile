@@ -3,6 +3,7 @@ import cors from "cors";
 import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
+import { startNotificationScheduler } from "./lib/notificationScheduler";
 
 const app: Express = express();
 

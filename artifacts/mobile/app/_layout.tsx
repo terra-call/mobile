@@ -8,19 +8,35 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Stack, router, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
-import React, { useEffect } from "react";
+import React, { useEffect, useRef } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { CareDataProvider } from "@/contexts/CareDataContext";
+import { registerForPushNotifications } from "@/services/notifications";
 
 SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient();
 
 const AUTH_SCREENS = ["login", "register"];
+
+// Register for push notifications when a care receiver logs in
+function NotificationInitializer() {
+  const { user } = useAuth();
+  const registeredRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!user || user.role !== "care-receiver") return;
+    if (registeredRef.current === user.id) return;
+    registeredRef.current = user.id;
+    registerForPushNotifications(user.id);
+  }, [user]);
+
+  return null;
+}
 
 function NavigationGuard() {
   const { user, loading } = useAuth();
@@ -57,6 +73,7 @@ function RootLayoutNav() {
   return (
     <>
       <NavigationGuard />
+      <NotificationInitializer />
       <Stack
         screenOptions={{
           headerShown: false,

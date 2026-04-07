@@ -68,10 +68,34 @@ artifacts/mobile/
 - Falls back to demo data if Firestore has no real care receivers
 
 ### Status Computation
-- `< 30 min` since last check-in → `checked-in` (green)
-- `30–120 min` → `missed` (orange)
-- `> 120 min` → `emergency` (red)
-- No check-in ever → `unknown` (muted)
+- Status windows are now **configurable per care receiver** (stored in Firestore as `missedWindowMin` / `escalationWindowMin`)
+- Defaults: `< 30 min` → `checked-in`, `30–120 min` → `missed`, `> 120 min` → `emergency`, no check-in → `unknown`
+- Caregiver dashboard uses each receiver's personal window settings
+
+### Firestore fields added to `users/{uid}` for care receivers
+```
+notificationsEnabled: boolean
+checkInScheduleType: "4h" | "8h" | "12h" | "24h" | "custom"
+checkInCustomHour: number
+checkInCustomMinute: number
+missedWindowMin: number
+escalationWindowMin: number
+expoPushToken: string (Expo push token, set on login)
+```
+
+### Push Notifications Architecture
+- **`expo-notifications` v0.32.16** installed — handles local reminders + push token registration
+- **Local reminders**: Scheduled on care receiver's device at configured interval (works in Expo Go on real device; requires native build for reliable background delivery)
+- **Caregiver alerts**: Care receiver's app monitors status every 60s; if missed/emergency window exceeded, sends push notification to caregivers' Expo push tokens via `https://exp.host/--/api/v2/push/send`
+- **API server scheduler**: Runs every 60s; receives schedules via `POST /api/notify/schedule`, check-ins via `POST /api/notify/checkin`, sends direct pushes via `POST /api/notify/send`
+- **Token registration**: Occurs at login for care receivers; token saved to `users/{uid}.expoPushToken`
+- **Native build required** for: reliable background delivery, Expo push token issuance from EAS
+
+### API Server Notification Endpoints
+- `POST /api/notify/send` — Send push to arbitrary token list
+- `POST /api/notify/schedule` — Register care receiver's check-in schedule
+- `POST /api/notify/checkin` — Record check-in (resets notification state)
+- `GET /api/notify/schedule/:userId` — Debug: view schedule state
 
 ## Environment Variables
 | Key | Purpose |
