@@ -12,8 +12,10 @@ import {
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { db, isFirebaseConfigured } from "@/services/firebase";
 import {
-  getCaregiverPushTokens,
+  getCaregiverContacts,
   sendExpoPushNotification,
+  triggerSmsAlert,
+  callNotifyApi,
 } from "@/services/notifications";
 import { useAuth } from "./AuthContext";
 
@@ -221,9 +223,14 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
       const caregivers = permittedCaregiversRef.current;
       const receiverName = user.name ?? "Your care receiver";
 
+      // Fetch push tokens + phone numbers in one batch
+      const contacts = await getCaregiverContacts(caregivers);
+      const cgTokens = contacts.map((c) => c.pushToken).filter(Boolean) as string[];
+      const cgPhones = contacts.map((c) => c.phone).filter(Boolean) as string[];
+
       if (diffMin >= escalation && !notifiedRef.current.emergency) {
         notifiedRef.current.emergency = true;
-        const cgTokens = await getCaregiverPushTokens(caregivers);
+        // Push notification
         if (cgTokens.length > 0) {
           await sendExpoPushNotification(
             cgTokens,
@@ -232,9 +239,13 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
             { type: "emergency", userId: user.id }
           );
         }
+        // SMS backup via API server
+        if (cgPhones.length > 0) {
+          await triggerSmsAlert(cgPhones, receiverName, "emergency", diffMin);
+        }
       } else if (diffMin >= missed && !notifiedRef.current.missed) {
         notifiedRef.current.missed = true;
-        const cgTokens = await getCaregiverPushTokens(caregivers);
+        // Push notification
         if (cgTokens.length > 0) {
           await sendExpoPushNotification(
             cgTokens,
@@ -242,6 +253,10 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
             `${receiverName} missed their scheduled check-in window.`,
             { type: "missed", userId: user.id }
           );
+        }
+        // SMS backup via API server
+        if (cgPhones.length > 0) {
+          await triggerSmsAlert(cgPhones, receiverName, "missed", diffMin);
         }
       }
     };
@@ -268,6 +283,9 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
 
     setLastCheckIn(now);
     notifiedRef.current = { missed: false, emergency: false };
+
+    // Notify API server scheduler so it resets its counters too
+    callNotifyApi("/notify/checkin", { userId: user.id, checkedInAt: now }).catch(() => {});
   }, [user]);
 
   const refreshStatus = useCallback(() => {

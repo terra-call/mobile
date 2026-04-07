@@ -137,24 +137,77 @@ export async function sendExpoPushNotification(
   }
 }
 
-// ── Fetch caregiver push tokens for a care receiver ───────────────────────────
-export async function getCaregiverPushTokens(
+interface CaregiverContactInfo {
+  pushToken: string | null;
+  phone: string | null;
+}
+
+// ── Fetch caregiver push tokens and phone numbers ────────────────────────────
+export async function getCaregiverContacts(
   permittedCaregivers: Array<{ id: string }>
-): Promise<string[]> {
+): Promise<CaregiverContactInfo[]> {
   if (!isFirebaseConfigured || !db || permittedCaregivers.length === 0) return [];
 
   try {
     const { getDoc } = await import("firebase/firestore");
-    const tokens: string[] = [];
+    const contacts: CaregiverContactInfo[] = [];
     for (const cg of permittedCaregivers) {
       const snap = await getDoc(doc(db, "users", cg.id));
       if (snap.exists()) {
-        const token = snap.data()?.expoPushToken as string | undefined;
-        if (token) tokens.push(token);
+        const data = snap.data();
+        contacts.push({
+          pushToken: (data?.expoPushToken as string | undefined) ?? null,
+          phone: (data?.phone as string | undefined) ?? null,
+        });
       }
     }
-    return tokens;
+    return contacts;
   } catch {
     return [];
   }
+}
+
+// ── Backwards-compat: push tokens only ───────────────────────────────────────
+export async function getCaregiverPushTokens(
+  permittedCaregivers: Array<{ id: string }>
+): Promise<string[]> {
+  const contacts = await getCaregiverContacts(permittedCaregivers);
+  return contacts.map((c) => c.pushToken).filter(Boolean) as string[];
+}
+
+export async function getCaregiverPhones(
+  permittedCaregivers: Array<{ id: string }>
+): Promise<string[]> {
+  const contacts = await getCaregiverContacts(permittedCaregivers);
+  return contacts.map((c) => c.phone).filter(Boolean) as string[];
+}
+
+// ── API server caller ─────────────────────────────────────────────────────────
+const API_BASE = (process.env.EXPO_PUBLIC_API_URL ?? "").replace(/\/$/, "");
+
+export async function callNotifyApi(
+  path: string,
+  body: Record<string, unknown>
+): Promise<boolean> {
+  if (!API_BASE) return false;
+  try {
+    const res = await fetch(`${API_BASE}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+// ── Trigger SMS alert via the API server ─────────────────────────────────────
+export async function triggerSmsAlert(
+  phones: string[],
+  receiverName: string,
+  status: "missed" | "emergency",
+  minutesSinceDue: number
+): Promise<void> {
+  await callNotifyApi("/notify/sms", { phones, receiverName, status, minutesSinceDue });
 }

@@ -41,6 +41,8 @@ import {
   cancelAllReminders,
   DEFAULT_NOTIFICATION_SETTINGS,
   type NotificationSettings,
+  getCaregiverPhones,
+  callNotifyApi,
 } from "@/services/notifications";
 
 interface PermittedCaregiver {
@@ -295,11 +297,35 @@ export default function SettingsScreen() {
 
       if (notifEnabled) {
         await scheduleCheckInReminders(settings);
-        Alert.alert("Saved", "Check-in reminders have been scheduled.");
       } else {
         await cancelAllReminders();
-        Alert.alert("Saved", "Notification settings saved. Reminders are disabled.");
       }
+
+      // Register schedule with API server so it can send SMS backup alerts
+      if (notifEnabled && caregivers.length > 0) {
+        try {
+          const cgPhones = await getCaregiverPhones(caregivers);
+          await callNotifyApi("/notify/schedule", {
+            userId: user.id,
+            receiverName: user.name ?? "Care Receiver",
+            scheduleType: scheduleType,
+            customHour,
+            customMinute,
+            missedWindowMin: missedNum,
+            escalationWindowMin: escalationNum,
+            caregiverPhones: cgPhones,
+          });
+        } catch {
+          // Non-blocking — SMS backup registration failed but local reminders are set
+        }
+      }
+
+      Alert.alert(
+        "Saved",
+        notifEnabled
+          ? "Check-in reminders have been scheduled. SMS backup alerts are active."
+          : "Notification settings saved. Reminders are disabled."
+      );
     } catch {
       Alert.alert("Error", "Could not save notification settings.");
     } finally {

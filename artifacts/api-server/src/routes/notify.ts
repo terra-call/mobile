@@ -1,9 +1,15 @@
 import { Router } from "express";
-import { registerSchedule, recordCheckIn, getSchedule } from "../lib/notificationScheduler";
+import {
+  registerSchedule,
+  recordCheckIn,
+  getSchedule,
+  sendDirectSms,
+} from "../lib/notificationScheduler";
+import { sendSmsToMany, isSmsConfigured } from "../lib/smsService";
 
 const router = Router();
 
-// Direct push: send arbitrary notification to tokens
+// ── Direct push: send arbitrary notification to Expo push tokens ──────────────
 router.post("/notify/send", async (req, res) => {
   const { tokens, title, body, data } = req.body as {
     tokens: string[];
@@ -33,18 +39,48 @@ router.post("/notify/send", async (req, res) => {
     });
     const result = await resp.json();
     res.json({ sent: valid.length, result });
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Failed to reach Expo Push API" });
   }
 });
 
-// Register or update a care receiver's check-in schedule
+// ── Direct SMS: send Twilio SMS to phone number list ─────────────────────────
+router.post("/notify/sms", async (req, res) => {
+  const { phones, receiverName, status, minutesSinceDue } = req.body as {
+    phones: string[];
+    receiverName: string;
+    status: "missed" | "emergency";
+    minutesSinceDue?: number;
+  };
+
+  if (!Array.isArray(phones) || !receiverName || !status) {
+    res.status(400).json({ error: "phones (array), receiverName, and status are required" });
+    return;
+  }
+
+  if (!isSmsConfigured()) {
+    res.status(503).json({ error: "SMS not configured (missing Twilio credentials)" });
+    return;
+  }
+
+  const validPhones = phones.filter((p) => p && p.trim().length >= 7);
+  if (validPhones.length === 0) {
+    res.json({ sent: 0, message: "No valid phone numbers provided" });
+    return;
+  }
+
+  await sendDirectSms(validPhones, receiverName, status, minutesSinceDue ?? 0);
+  res.json({ sent: validPhones.length });
+});
+
+// ── Register or update a care receiver's check-in schedule ───────────────────
 router.post("/notify/schedule", (req, res) => {
   const body = req.body as {
     userId: string;
     receiverName: string;
     receiverToken?: string;
     caregiverTokens?: string[];
+    caregiverPhones?: string[];
     scheduleType: "4h" | "8h" | "12h" | "24h" | "custom";
     customHour?: number;
     customMinute?: number;
@@ -63,6 +99,7 @@ router.post("/notify/schedule", (req, res) => {
     receiverName: body.receiverName,
     receiverToken: body.receiverToken ?? null,
     caregiverTokens: body.caregiverTokens ?? [],
+    caregiverPhones: (body.caregiverPhones ?? []).filter(Boolean),
     scheduleType: body.scheduleType,
     customHour: body.customHour ?? 9,
     customMinute: body.customMinute ?? 0,
@@ -74,7 +111,7 @@ router.post("/notify/schedule", (req, res) => {
   res.json({ ok: true });
 });
 
-// Record a check-in event (resets the missed/escalation counters)
+// ── Record a check-in event (resets missed/escalation counters) ───────────────
 router.post("/notify/checkin", (req, res) => {
   const { userId, checkedInAt } = req.body as { userId: string; checkedInAt: string };
   if (!userId) {
@@ -85,7 +122,7 @@ router.post("/notify/checkin", (req, res) => {
   res.json({ ok: true });
 });
 
-// Debug: view current schedule for a user
+// ── Debug: view current schedule state ───────────────────────────────────────
 router.get("/notify/schedule/:userId", (req, res) => {
   const schedule = getSchedule(req.params.userId ?? "");
   if (!schedule) {
@@ -93,6 +130,11 @@ router.get("/notify/schedule/:userId", (req, res) => {
     return;
   }
   res.json(schedule);
+});
+
+// ── Status check: is SMS configured? ────────────────────────────────────────
+router.get("/notify/sms/status", (_req, res) => {
+  res.json({ configured: isSmsConfigured() });
 });
 
 export default router;

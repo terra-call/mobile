@@ -18,7 +18,8 @@
     "express": "^5",
     "firebase": "^12.11.0",
     "pino": "^9",
-    "pino-http": "^10"
+    "pino-http": "^10",
+    "twilio": "^5.13.1"
   },
   "devDependencies": {
     "@types/cookie-parser": "^1.4.10",
