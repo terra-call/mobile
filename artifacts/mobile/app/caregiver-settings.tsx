@@ -5,9 +5,17 @@ import {
   updateEmail,
   updatePassword,
 } from "firebase/auth";
-import { doc, updateDoc } from "firebase/firestore";
+import {
+  arrayRemove,
+  collection,
+  doc,
+  getDocs,
+  query,
+  updateDoc,
+  where,
+} from "firebase/firestore";
 import { router } from "expo-router";
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -24,6 +32,13 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/contexts/AuthContext";
 import { useColors } from "@/hooks/useColors";
 import { auth, db, isFirebaseConfigured } from "@/services/firebase";
+
+interface LinkedReceiver {
+  id: string;
+  name: string;
+  email: string;
+  permittedCaregivers: Array<{ id: string; name: string; email: string }>;
+}
 
 export default function CaregiverSettingsScreen() {
   const { user, logout } = useAuth();
@@ -45,6 +60,67 @@ export default function CaregiverSettingsScreen() {
   const [credSaving, setCredSaving] = useState(false);
   const [showCurrentPass, setShowCurrentPass] = useState(false);
   const [showNewPass, setShowNewPass] = useState(false);
+
+  // Linked care receivers
+  const [receivers, setReceivers] = useState<LinkedReceiver[]>([]);
+  const [receiversLoading, setReceiversLoading] = useState(true);
+
+  // ── Load care receivers that have this caregiver in their permittedCaregivers ──
+  useEffect(() => {
+    if (!user || !isFirebaseConfigured || !db) {
+      setReceiversLoading(false);
+      return;
+    }
+    const q = query(collection(db, "users"), where("role", "==", "care-receiver"));
+    getDocs(q)
+      .then((snap) => {
+        const linked: LinkedReceiver[] = [];
+        snap.docs.forEach((d) => {
+          const data = d.data();
+          const permitted: Array<{ id: string; name: string; email: string }> =
+            data.permittedCaregivers ?? [];
+          if (permitted.some((cg) => cg.id === user.id)) {
+            linked.push({
+              id: d.id,
+              name: data.name ?? "Care Receiver",
+              email: data.email ?? "",
+              permittedCaregivers: permitted,
+            });
+          }
+        });
+        setReceivers(linked);
+      })
+      .catch(() => {})
+      .finally(() => setReceiversLoading(false));
+  }, [user]);
+
+  // ── Remove self from a care receiver's permitted list ─────────────────────
+  const removeSelf = (receiver: LinkedReceiver) => {
+    Alert.alert(
+      "Stop Monitoring",
+      `Remove yourself from monitoring ${receiver.name}? You will no longer see their check-ins.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove",
+          style: "destructive",
+          onPress: async () => {
+            if (!user || !isFirebaseConfigured || !db) return;
+            const cgEntry = receiver.permittedCaregivers.find((cg) => cg.id === user.id);
+            if (!cgEntry) return;
+            try {
+              await updateDoc(doc(db, "users", receiver.id), {
+                permittedCaregivers: arrayRemove(cgEntry),
+              });
+              setReceivers((prev) => prev.filter((r) => r.id !== receiver.id));
+            } catch {
+              Alert.alert("Error", "Could not remove you. Please try again.");
+            }
+          },
+        },
+      ]
+    );
+  };
 
   // ── Save profile ──────────────────────────────────────────────────────────
   const saveProfile = async () => {
@@ -70,10 +146,8 @@ export default function CaregiverSettingsScreen() {
   // ── Update credentials ────────────────────────────────────────────────────
   const saveCredentials = async () => {
     if (!user || !auth?.currentUser) return;
-
     const emailChanged = newEmail.trim() !== user.email;
     const passwordChanged = newPassword.length > 0;
-
     if (!emailChanged && !passwordChanged) {
       Alert.alert("No Changes", "Enter a new email or password to update.");
       return;
@@ -86,12 +160,10 @@ export default function CaregiverSettingsScreen() {
       Alert.alert("Required", "Enter your current password to make security changes.");
       return;
     }
-
     setCredSaving(true);
     try {
       const credential = EmailAuthProvider.credential(user.email, currentPassword);
       await reauthenticateWithCredential(auth.currentUser, credential);
-
       if (emailChanged && isFirebaseConfigured && db) {
         await updateEmail(auth.currentUser, newEmail.trim());
         await updateDoc(doc(db, "users", user.id), { email: newEmail.trim() });
@@ -99,20 +171,15 @@ export default function CaregiverSettingsScreen() {
       if (passwordChanged) {
         await updatePassword(auth.currentUser, newPassword);
       }
-
       setCurrentPassword("");
       setNewPassword("");
       Alert.alert("Updated", "Your credentials have been updated.");
     } catch (err: unknown) {
       const code = (err as { code?: string })?.code ?? "";
       let msg = "Could not update credentials.";
-      if (code === "auth/wrong-password" || code === "auth/invalid-credential") {
-        msg = "Incorrect current password.";
-      } else if (code === "auth/email-already-in-use") {
-        msg = "That email is already in use by another account.";
-      } else if (code === "auth/requires-recent-login") {
-        msg = "Please log out and log back in before changing credentials.";
-      }
+      if (code === "auth/wrong-password" || code === "auth/invalid-credential") msg = "Incorrect current password.";
+      else if (code === "auth/email-already-in-use") msg = "That email is already in use by another account.";
+      else if (code === "auth/requires-recent-login") msg = "Please log out and log back in before changing credentials.";
       Alert.alert("Error", msg);
     } finally {
       setCredSaving(false);
@@ -120,9 +187,9 @@ export default function CaregiverSettingsScreen() {
   };
 
   const handleLogout = () => {
-    Alert.alert("Sign Out", "Are you sure you want to sign out?", [
+    Alert.alert("Log Out", "Are you sure you want to log out?", [
       { text: "Cancel", style: "cancel" },
-      { text: "Sign Out", style: "destructive", onPress: logout },
+      { text: "Log Out", style: "destructive", onPress: logout },
     ]);
   };
 
@@ -150,10 +217,10 @@ export default function CaregiverSettingsScreen() {
           <View style={{ width: 34 }} />
         </View>
 
-        {/* ── Profile Section ── */}
+        {/* ── Profile ── */}
         <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: colors.mutedForeground }]}>PROFILE</Text>
-          <View style={[styles.sectionCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>PROFILE</Text>
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <View style={styles.field}>
               <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>Full Name</Text>
               <TextInput
@@ -165,7 +232,6 @@ export default function CaregiverSettingsScreen() {
                 autoCorrect={false}
               />
             </View>
-
             <View style={styles.field}>
               <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>Phone Number</Text>
               <TextInput
@@ -177,25 +243,14 @@ export default function CaregiverSettingsScreen() {
                 keyboardType="phone-pad"
               />
             </View>
-
-            <Pressable
-              style={[styles.saveBtn, { backgroundColor: profileSaving ? colors.muted : colors.primary }]}
-              onPress={saveProfile}
-              disabled={profileSaving}
-            >
-              {profileSaving ? (
-                <ActivityIndicator size="small" color={colors.primaryForeground} />
-              ) : (
-                <Text style={[styles.saveBtnText, { color: colors.primaryForeground }]}>Save Profile</Text>
-              )}
-            </Pressable>
+            <ActionButton label="Save Profile" loading={profileSaving} onPress={saveProfile} bg={colors.primary} fg={colors.primaryForeground} />
           </View>
         </View>
 
-        {/* ── Security Section ── */}
+        {/* ── Security ── */}
         <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: colors.mutedForeground }]}>SECURITY</Text>
-          <View style={[styles.sectionCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>SECURITY</Text>
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <View style={styles.field}>
               <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>New Email Address</Text>
               <TextInput
@@ -209,69 +264,62 @@ export default function CaregiverSettingsScreen() {
                 autoCorrect={false}
               />
             </View>
-
             <View style={styles.field}>
               <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>New Password</Text>
-              <View style={styles.passwordRow}>
-                <TextInput
-                  style={[styles.input, styles.passwordInput, { backgroundColor: colors.background, borderColor: colors.border, color: colors.text }]}
-                  value={newPassword}
-                  onChangeText={setNewPassword}
-                  placeholder="Leave blank to keep current"
-                  placeholderTextColor={colors.mutedForeground}
-                  secureTextEntry={!showNewPass}
-                  autoCapitalize="none"
-                />
-                <Pressable
-                  onPress={() => setShowNewPass((v) => !v)}
-                  style={[styles.eyeBtn, { backgroundColor: colors.background, borderColor: colors.border }]}
-                >
-                  <Feather name={showNewPass ? "eye-off" : "eye"} size={18} color={colors.mutedForeground} />
-                </Pressable>
-              </View>
+              <PasswordField value={newPassword} onChange={setNewPassword} show={showNewPass} onToggle={() => setShowNewPass(v => !v)} placeholder="Leave blank to keep current" colors={colors} />
             </View>
-
             <View style={styles.field}>
-              <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>
-                Current Password (required to save changes)
-              </Text>
-              <View style={styles.passwordRow}>
-                <TextInput
-                  style={[styles.input, styles.passwordInput, { backgroundColor: colors.background, borderColor: colors.border, color: colors.text }]}
-                  value={currentPassword}
-                  onChangeText={setCurrentPassword}
-                  placeholder="Confirm your current password"
-                  placeholderTextColor={colors.mutedForeground}
-                  secureTextEntry={!showCurrentPass}
-                  autoCapitalize="none"
-                />
-                <Pressable
-                  onPress={() => setShowCurrentPass((v) => !v)}
-                  style={[styles.eyeBtn, { backgroundColor: colors.background, borderColor: colors.border }]}
-                >
-                  <Feather name={showCurrentPass ? "eye-off" : "eye"} size={18} color={colors.mutedForeground} />
-                </Pressable>
-              </View>
+              <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>Current Password (required to save changes)</Text>
+              <PasswordField value={currentPassword} onChange={setCurrentPassword} show={showCurrentPass} onToggle={() => setShowCurrentPass(v => !v)} placeholder="Confirm your current password" colors={colors} />
             </View>
-
-            <Pressable
-              style={[styles.saveBtn, { backgroundColor: credSaving ? colors.muted : "#00C8FF" }]}
-              onPress={saveCredentials}
-              disabled={credSaving}
-            >
-              {credSaving ? (
-                <ActivityIndicator size="small" color="#060a18" />
-              ) : (
-                <Text style={[styles.saveBtnText, { color: "#060a18" }]}>Update Credentials</Text>
-              )}
-            </Pressable>
+            <ActionButton label="Update Credentials" loading={credSaving} onPress={saveCredentials} bg="#00C8FF" fg="#060a18" />
           </View>
         </View>
 
-        {/* ── Account Section ── */}
+        {/* ── My Care Receivers ── */}
         <View style={styles.section}>
-          <Text style={[styles.sectionTitle, { color: colors.mutedForeground }]}>ACCOUNT</Text>
-          <View style={[styles.sectionCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>MY CARE RECEIVERS</Text>
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <Text style={[styles.sectionNote, { color: colors.mutedForeground }]}>
+              These are the people whose check-ins you are monitoring.
+            </Text>
+
+            {receiversLoading ? (
+              <ActivityIndicator color={colors.primary} style={{ marginVertical: 12 }} />
+            ) : receivers.length === 0 ? (
+              <View style={[styles.emptyCard, { borderColor: colors.border }]}>
+                <Feather name="user-x" size={22} color={colors.mutedForeground} />
+                <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
+                  Not linked to any care receivers yet
+                </Text>
+              </View>
+            ) : (
+              receivers.map((r) => (
+                <View key={r.id} style={[styles.receiverRow, { backgroundColor: colors.background, borderColor: colors.border }]}>
+                  <View style={[styles.receiverAvatar, { backgroundColor: "#00C8FF18" }]}>
+                    <Feather name="user" size={18} color="#00C8FF" />
+                  </View>
+                  <View style={styles.receiverInfo}>
+                    <Text style={[styles.receiverName, { color: colors.text }]}>{r.name}</Text>
+                    <Text style={[styles.receiverEmail, { color: colors.mutedForeground }]}>{r.email}</Text>
+                  </View>
+                  <Pressable
+                    onPress={() => removeSelf(r)}
+                    hitSlop={10}
+                    style={[styles.removeBtn, { borderColor: "#FF3B3044" }]}
+                  >
+                    <Feather name="x" size={14} color="#FF3B30" />
+                  </Pressable>
+                </View>
+              ))
+            )}
+          </View>
+        </View>
+
+        {/* ── Account / Log Out ── */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>ACCOUNT</Text>
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <View style={styles.accountRow}>
               <View style={[styles.accountAvatar, { backgroundColor: "#22FF6E18" }]}>
                 <Feather name="shield" size={20} color="#22FF6E" />
@@ -289,7 +337,7 @@ export default function CaregiverSettingsScreen() {
 
             <Pressable style={styles.logoutRow} onPress={handleLogout}>
               <Feather name="log-out" size={18} color={colors.destructive} />
-              <Text style={[styles.logoutText, { color: colors.destructive }]}>Sign Out</Text>
+              <Text style={[styles.logoutText, { color: colors.destructive }]}>Log Out</Text>
             </Pressable>
           </View>
         </View>
@@ -298,6 +346,53 @@ export default function CaregiverSettingsScreen() {
   );
 }
 
+// ── Shared helpers ────────────────────────────────────────────────────────────
+
+function PasswordField({
+  value, onChange, show, onToggle, placeholder, colors,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  show: boolean;
+  onToggle: () => void;
+  placeholder: string;
+  colors: ReturnType<typeof import("@/hooks/useColors").useColors>;
+}) {
+  return (
+    <View style={styles.passwordRow}>
+      <TextInput
+        style={[styles.input, styles.passwordInput, { backgroundColor: colors.background, borderColor: colors.border, color: colors.text }]}
+        value={value}
+        onChangeText={onChange}
+        placeholder={placeholder}
+        placeholderTextColor={colors.mutedForeground}
+        secureTextEntry={!show}
+        autoCapitalize="none"
+      />
+      <Pressable onPress={onToggle} style={[styles.eyeBtn, { backgroundColor: colors.background, borderColor: colors.border }]}>
+        <Feather name={show ? "eye-off" : "eye"} size={18} color={colors.mutedForeground} />
+      </Pressable>
+    </View>
+  );
+}
+
+function ActionButton({
+  label, loading, onPress, bg, fg,
+}: {
+  label: string; loading: boolean; onPress: () => void; bg: string; fg: string;
+}) {
+  return (
+    <Pressable style={[styles.saveBtn, { backgroundColor: loading ? "#1a2640" : bg }]} onPress={onPress} disabled={loading}>
+      {loading ? (
+        <ActivityIndicator size="small" color={fg} />
+      ) : (
+        <Text style={[styles.saveBtnText, { color: fg }]}>{label}</Text>
+      )}
+    </Pressable>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
   root: { flex: 1 },
   scroll: { paddingHorizontal: 20 },
@@ -310,93 +405,66 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4,
   },
   backBtn: { padding: 4 },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: "700",
-    fontFamily: "Inter_700Bold",
-    letterSpacing: 0.3,
-  },
+  headerTitle: { fontSize: 20, fontWeight: "700", fontFamily: "Inter_700Bold", letterSpacing: 0.3 },
 
   section: { marginBottom: 28 },
-  sectionTitle: {
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 1.4,
-    fontFamily: "Inter_700Bold",
-    marginBottom: 10,
-    marginLeft: 4,
+  sectionLabel: {
+    fontSize: 11, fontWeight: "700", letterSpacing: 1.4,
+    fontFamily: "Inter_700Bold", marginBottom: 10, marginLeft: 4,
   },
-  sectionCard: {
-    borderRadius: 16,
-    borderWidth: 1,
-    padding: 20,
-    gap: 16,
-  },
+  sectionNote: { fontSize: 13, lineHeight: 20, fontFamily: "Inter_400Regular" },
+  card: { borderRadius: 16, borderWidth: 1, padding: 20, gap: 16 },
 
   field: { gap: 8 },
-  fieldLabel: {
-    fontSize: 11,
-    fontWeight: "600",
-    letterSpacing: 0.4,
-    fontFamily: "Inter_600SemiBold",
-  },
+  fieldLabel: { fontSize: 11, fontWeight: "600", letterSpacing: 0.4, fontFamily: "Inter_600SemiBold" },
   input: {
-    borderRadius: 12,
-    borderWidth: 1,
+    borderRadius: 12, borderWidth: 1,
     paddingHorizontal: 14,
     paddingVertical: Platform.OS === "ios" ? 14 : 11,
-    fontSize: 15,
-    fontFamily: "Inter_400Regular",
+    fontSize: 15, fontFamily: "Inter_400Regular",
   },
   passwordRow: { flexDirection: "row", alignItems: "center" },
   passwordInput: { flex: 1, borderTopRightRadius: 0, borderBottomRightRadius: 0 },
   eyeBtn: {
     paddingHorizontal: 14,
     paddingVertical: Platform.OS === "ios" ? 14 : 11,
-    borderTopRightRadius: 12,
-    borderBottomRightRadius: 12,
-    borderWidth: 1,
-    borderLeftWidth: 0,
+    borderTopRightRadius: 12, borderBottomRightRadius: 12,
+    borderWidth: 1, borderLeftWidth: 0,
   },
 
-  saveBtn: {
-    borderRadius: 12,
-    paddingVertical: 14,
-    alignItems: "center",
-    marginTop: 4,
+  saveBtn: { borderRadius: 12, paddingVertical: 14, alignItems: "center", marginTop: 4 },
+  saveBtnText: { fontSize: 15, fontWeight: "700", fontFamily: "Inter_700Bold", letterSpacing: 0.3 },
+
+  emptyCard: {
+    borderRadius: 12, borderWidth: 1, borderStyle: "dashed",
+    padding: 24, alignItems: "center", gap: 10,
   },
-  saveBtnText: {
-    fontSize: 15,
-    fontWeight: "700",
-    fontFamily: "Inter_700Bold",
-    letterSpacing: 0.3,
+  emptyText: { fontSize: 14, fontFamily: "Inter_400Regular" },
+
+  receiverRow: {
+    flexDirection: "row", alignItems: "center",
+    borderRadius: 12, borderWidth: 1, padding: 14, gap: 12,
+  },
+  receiverAvatar: {
+    width: 40, height: 40, borderRadius: 20,
+    alignItems: "center", justifyContent: "center",
+  },
+  receiverInfo: { flex: 1, gap: 3 },
+  receiverName: { fontSize: 15, fontWeight: "600", fontFamily: "Inter_600SemiBold" },
+  receiverEmail: { fontSize: 12, fontFamily: "Inter_400Regular" },
+  removeBtn: {
+    width: 30, height: 30, borderRadius: 15,
+    borderWidth: 1, alignItems: "center", justifyContent: "center",
   },
 
   accountRow: { flexDirection: "row", alignItems: "center", gap: 14 },
-  accountAvatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: "center",
-    justifyContent: "center",
-  },
+  accountAvatar: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
   accountName: { fontSize: 15, fontWeight: "600", fontFamily: "Inter_600SemiBold" },
   accountEmail: { fontSize: 12, fontFamily: "Inter_400Regular", marginTop: 2 },
-  roleBadge: {
-    borderRadius: 8,
-    borderWidth: 1,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-  },
+  roleBadge: { borderRadius: 8, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 5 },
   roleText: { fontSize: 11, fontWeight: "700", fontFamily: "Inter_700Bold", letterSpacing: 0.5 },
 
   separator: { height: 1, marginHorizontal: -4 },
-
-  logoutRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    paddingVertical: 4,
-  },
+  logoutRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 4 },
   logoutText: { fontSize: 15, fontWeight: "600", fontFamily: "Inter_600SemiBold" },
 });
