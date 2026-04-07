@@ -187,10 +187,14 @@ export default function CaregiverSettingsScreen() {
   };
 
   const handleLogout = () => {
-    Alert.alert("Log Out", "Are you sure you want to log out?", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Log Out", style: "destructive", onPress: logout },
-    ]);
+    if (Platform.OS === "web") {
+      logout();
+    } else {
+      Alert.alert("Log Out", "Are you sure you want to log out?", [
+        { text: "Cancel", style: "cancel" },
+        { text: "Log Out", style: "destructive", onPress: logout },
+      ]);
+    }
   };
 
   // ─────────────────────────────────────────────────────────────────────────
