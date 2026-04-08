@@ -13,9 +13,11 @@ import {
   TextInput,
   View,
 } from "react-native";
+import { sendPasswordResetEmail } from "firebase/auth";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/contexts/AuthContext";
 import { useColors } from "@/hooks/useColors";
+import { auth } from "@/services/firebase";
 
 export default function LoginScreen() {
   const { user, login } = useAuth();
@@ -41,6 +43,24 @@ export default function LoginScreen() {
 
   const topPadding = Platform.OS === "web" ? 67 : insets.top;
   const bottomPadding = Platform.OS === "web" ? 34 : insets.bottom;
+
+  const handleForgotPassword = async () => {
+    const trimmed = email.trim();
+    if (!trimmed) {
+      Alert.alert("Enter your email", "Type your email address above, then tap 'Forgot password?' to receive a reset link.");
+      return;
+    }
+    try {
+      await sendPasswordResetEmail(auth!, trimmed);
+      Alert.alert("Reset email sent", `Check your inbox at ${trimmed} for a password reset link. It may take a minute to arrive.`);
+    } catch (err: unknown) {
+      const code = (err as { code?: string })?.code ?? "";
+      let message = "Could not send reset email. Please try again.";
+      if (code === "auth/invalid-email") message = "Please enter a valid email address.";
+      else if (code === "auth/user-not-found") message = "No account found with that email.";
+      Alert.alert("Error", message);
+    }
+  };
 
   const handleLogin = async () => {
     if (!email.trim() || !password) {
@@ -161,6 +181,9 @@ export default function LoginScreen() {
                 <Feather name={showPassword ? "eye-off" : "eye"} size={18} color={colors.mutedForeground} />
               </Pressable>
             </View>
+            <Pressable onPress={handleForgotPassword} style={styles.forgotPassword}>
+              <Text style={[styles.forgotPasswordText, { color: colors.accent }]}>Forgot password?</Text>
+            </Pressable>
           </View>
 
           <Pressable
@@ -234,6 +257,8 @@ const styles = StyleSheet.create({
   signInText: { fontSize: 17, fontWeight: "700", letterSpacing: 0.5, fontFamily: "Inter_700Bold" },
   passwordRow: { flexDirection: "row", alignItems: "center" },
   passwordInput: { flex: 1, borderTopRightRadius: 0, borderBottomRightRadius: 0 },
+  forgotPassword: { alignSelf: "flex-end", marginTop: 8 },
+  forgotPasswordText: { fontSize: 13, fontFamily: "Inter_600SemiBold" },
   eyeButton: {
     borderWidth: 1,
     borderLeftWidth: 0,
