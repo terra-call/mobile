@@ -1,3 +1,4 @@
+import { Feather } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { router } from "expo-router";
 import React, { useRef, useState } from "react";
@@ -22,6 +23,7 @@ export default function LoginScreen() {
   const insets = useSafeAreaInsets();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const passwordRef = useRef<TextInput>(null);
 
@@ -136,20 +138,29 @@ export default function LoginScreen() {
 
           <View>
             <Text style={[styles.label, { color: colors.mutedForeground }]}>Password</Text>
-            <TextInput
-              ref={passwordRef}
-              style={[
-                styles.input,
-                { backgroundColor: colors.card, borderColor: colors.border, color: colors.text },
-              ]}
-              placeholder="••••••••"
-              placeholderTextColor={colors.mutedForeground}
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-              returnKeyType="done"
-              onSubmitEditing={handleLogin}
-            />
+            <View style={styles.passwordRow}>
+              <TextInput
+                ref={passwordRef}
+                style={[
+                  styles.input,
+                  styles.passwordInput,
+                  { backgroundColor: colors.card, borderColor: colors.border, color: colors.text },
+                ]}
+                placeholder="••••••••"
+                placeholderTextColor={colors.mutedForeground}
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry={!showPassword}
+                returnKeyType="done"
+                onSubmitEditing={handleLogin}
+              />
+              <Pressable
+                onPress={() => setShowPassword((v) => !v)}
+                style={[styles.eyeButton, { backgroundColor: colors.card, borderColor: colors.border }]}
+              >
+                <Feather name={showPassword ? "eye-off" : "eye"} size={18} color={colors.mutedForeground} />
+              </Pressable>
+            </View>
           </View>
 
           <Pressable
@@ -221,6 +232,18 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
   signInText: { fontSize: 17, fontWeight: "700", letterSpacing: 0.5, fontFamily: "Inter_700Bold" },
+  passwordRow: { flexDirection: "row", alignItems: "center" },
+  passwordInput: { flex: 1, borderTopRightRadius: 0, borderBottomRightRadius: 0 },
+  eyeButton: {
+    borderWidth: 1,
+    borderLeftWidth: 0,
+    borderTopRightRadius: 12,
+    borderBottomRightRadius: 12,
+    paddingHorizontal: 14,
+    alignSelf: "stretch",
+    alignItems: "center",
+    justifyContent: "center",
+  },
   footer: { flexDirection: "row", justifyContent: "center", alignItems: "center" },
   footerText: { fontSize: 15, fontFamily: "Inter_400Regular" },
   registerLink: { fontSize: 15, fontWeight: "600", fontFamily: "Inter_600SemiBold" },

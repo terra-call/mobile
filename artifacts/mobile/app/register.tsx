@@ -64,6 +64,7 @@ export default function RegisterScreen() {
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const emailRef = useRef<TextInput>(null);
@@ -291,17 +292,25 @@ export default function RegisterScreen() {
           {!isRecovery && (
             <View>
               <Text style={[styles.label, { color: colors.mutedForeground }]}>Password *</Text>
-              <TextInput
-                ref={passwordRef}
-                style={[styles.input, { backgroundColor: colors.card, borderColor: colors.border, color: colors.text }]}
-                placeholder="Minimum 6 characters"
-                placeholderTextColor={colors.mutedForeground}
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry
-                returnKeyType="done"
-                onSubmitEditing={handleSubmit}
-              />
+              <View style={styles.passwordRow}>
+                <TextInput
+                  ref={passwordRef}
+                  style={[styles.input, styles.passwordInput, { backgroundColor: colors.card, borderColor: colors.border, color: colors.text }]}
+                  placeholder="Minimum 6 characters"
+                  placeholderTextColor={colors.mutedForeground}
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry={!showPassword}
+                  returnKeyType="done"
+                  onSubmitEditing={handleSubmit}
+                />
+                <Pressable
+                  onPress={() => setShowPassword((v) => !v)}
+                  style={[styles.eyeButton, { backgroundColor: colors.card, borderColor: colors.border }]}
+                >
+                  <Feather name={showPassword ? "eye-off" : "eye"} size={18} color={colors.mutedForeground} />
+                </Pressable>
+              </View>
             </View>
           )}
 
@@ -406,6 +415,18 @@ const styles = StyleSheet.create({
     elevation: 8,
   },
   registerButtonText: { fontSize: 17, fontWeight: "700", fontFamily: "Inter_700Bold" },
+  passwordRow: { flexDirection: "row", alignItems: "center" },
+  passwordInput: { flex: 1, borderTopRightRadius: 0, borderBottomRightRadius: 0 },
+  eyeButton: {
+    borderWidth: 1,
+    borderLeftWidth: 0,
+    borderTopRightRadius: 12,
+    borderBottomRightRadius: 12,
+    paddingHorizontal: 14,
+    alignSelf: "stretch",
+    alignItems: "center",
+    justifyContent: "center",
+  },
   loginLink: { flexDirection: "row", justifyContent: "center", marginTop: 24 },
   loginLinkText: { fontSize: 14, fontFamily: "Inter_400Regular" },
   loginLinkAction: { fontSize: 14, fontWeight: "600", fontFamily: "Inter_600SemiBold" },
