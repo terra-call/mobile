@@ -36,6 +36,7 @@ export interface CareReceiver {
 interface CareDataContextValue {
   careReceivers: CareReceiver[];
   lastCheckIn: string | null;
+  checkInHistory: string[];
   checkIn: () => Promise<void>;
   loading: boolean;
   refreshStatus: () => void;
@@ -105,7 +106,10 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const [careReceivers, setCareReceivers] = useState<CareReceiver[]>([]);
   const [lastCheckIn, setLastCheckIn] = useState<string | null>(null);
+  const [checkInHistory, setCheckInHistory] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+
+  const HISTORY_KEY = `@terra:checkInHistory`;
 
   // Track which notification states have been sent so we don't spam
   const notifiedRef = useRef<{ missed: boolean; emergency: boolean }>({ missed: false, emergency: false });
@@ -172,9 +176,7 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
               escalationWindowMin: escalation,
             };
           });
-          setCareReceivers(
-            liveReceivers.length > 0 ? liveReceivers : DEMO_RECEIVERS
-          );
+          setCareReceivers(liveReceivers);
           setLoading(false);
         });
         return unsubscribe;
@@ -184,17 +186,12 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
         AsyncStorage.getItem(`${CHECK_IN_KEY}:${user.id}`).then((val) => {
           if (val) setLastCheckIn(val);
         });
+        AsyncStorage.getItem(`${HISTORY_KEY}:${user.id}`).then((val) => {
+          if (val) setCheckInHistory(JSON.parse(val));
+        });
       } else {
         AsyncStorage.getItem(`${RECEIVERS_KEY}:${user.id}`).then((val) => {
-          if (val) {
-            setCareReceivers(JSON.parse(val));
-          } else {
-            setCareReceivers(DEMO_RECEIVERS);
-            AsyncStorage.setItem(
-              `${RECEIVERS_KEY}:${user.id}`,
-              JSON.stringify(DEMO_RECEIVERS)
-            );
-          }
+          if (val) setCareReceivers(JSON.parse(val));
         });
       }
     }
@@ -282,6 +279,11 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
     }
 
     setLastCheckIn(now);
+    setCheckInHistory((prev) => {
+      const updated = [now, ...prev].slice(0, 7);
+      AsyncStorage.setItem(`${HISTORY_KEY}:${user.id}`, JSON.stringify(updated)).catch(() => {});
+      return updated;
+    });
     notifiedRef.current = { missed: false, emergency: false };
 
     // Notify API server scheduler so it resets its counters too
@@ -297,7 +299,7 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <CareDataContext.Provider
-      value={{ careReceivers, lastCheckIn, checkIn, loading, refreshStatus }}
+      value={{ careReceivers, lastCheckIn, checkInHistory, checkIn, loading, refreshStatus }}
     >
       {children}
     </CareDataContext.Provider>

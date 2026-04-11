@@ -5,23 +5,56 @@ import {
   Inter_700Bold,
   useFonts,
 } from "@expo-google-fonts/inter";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Stack, router, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { StyleSheet, Text, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { CareDataProvider } from "@/contexts/CareDataContext";
+import { STORAGE_KEYS } from "@/constants/storage";
 import { registerForPushNotifications } from "@/services/notifications";
+
+const ONBOARDING_KEY = STORAGE_KEYS.ONBOARDING_SEEN;
 
 SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient();
 
-const AUTH_SCREENS = ["login", "register"];
+const splashStyles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: "#060a18",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+  },
+  name: {
+    color: "#FFFFFF",
+    fontSize: 34,
+    fontWeight: "800",
+    letterSpacing: 5,
+  },
+  line: {
+    width: 36,
+    height: 2,
+    backgroundColor: "#22FF6E",
+    borderRadius: 1,
+  },
+  tagline: {
+    color: "#8892B0",
+    fontSize: 12,
+    letterSpacing: 1.5,
+    textTransform: "uppercase",
+  },
+});
+
+const AUTH_SCREENS = ["login", "register", "onboarding"];
 
 // Register for push notifications when a care receiver logs in
 function NotificationInitializer() {
@@ -41,17 +74,29 @@ function NotificationInitializer() {
 function NavigationGuard() {
   const { user, loading } = useAuth();
   const segments = useSegments();
+  const [onboardingChecked, setOnboardingChecked] = useState(false);
+  const [onboardingSeen, setOnboardingSeen] = useState(false);
 
   useEffect(() => {
-    if (loading) return;
+    AsyncStorage.getItem(ONBOARDING_KEY).then((val) => {
+      setOnboardingSeen(val === "true");
+      setOnboardingChecked(true);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (loading || !onboardingChecked) return;
 
     const currentScreen = segments[0] ?? "index";
     const onAuthScreen = AUTH_SCREENS.includes(currentScreen);
     const onIndexScreen = currentScreen === "index" || currentScreen === "(index)";
 
     if (!user) {
-      // Signed out — go to login unless already on an auth screen
-      if (!onAuthScreen) {
+      if (!onboardingSeen && !onAuthScreen) {
+        // First ever launch — show onboarding
+        router.replace("/onboarding");
+      } else if (onboardingSeen && !onAuthScreen) {
+        // Returning user, not logged in — go to login
         router.replace("/login");
       }
     } else {
@@ -64,7 +109,7 @@ function NavigationGuard() {
         }
       }
     }
-  }, [user, loading, segments]);
+  }, [user, loading, segments, onboardingChecked, onboardingSeen]);
 
   return null;
 }
@@ -82,6 +127,7 @@ function RootLayoutNav() {
         }}
       >
         <Stack.Screen name="index" />
+        <Stack.Screen name="onboarding" />
         <Stack.Screen name="login" />
         <Stack.Screen name="register" />
         <Stack.Screen name="(care-receiver)" />
@@ -114,7 +160,15 @@ export default function RootLayout() {
     }
   }, [fontsLoaded, fontError]);
 
-  if (!fontsLoaded && !fontError) return null;
+  if (!fontsLoaded && !fontError) {
+    return (
+      <View style={splashStyles.container}>
+        <Text style={splashStyles.name}>TERRA CALL</Text>
+        <View style={splashStyles.line} />
+        <Text style={splashStyles.tagline}>Emergency Caregiver Monitoring</Text>
+      </View>
+    );
+  }
 
   return (
     <SafeAreaProvider>

@@ -57,14 +57,10 @@ export default function CaregiverDashboard() {
   };
 
   const handleLogout = () => {
-    if (Platform.OS === "web") {
-      logout();
-    } else {
-      Alert.alert("Log Out", "Are you sure you want to log out?", [
-        { text: "Cancel", style: "cancel" },
-        { text: "Log Out", style: "destructive", onPress: logout },
-      ]);
-    }
+    Alert.alert("Log Out", "Are you sure you want to log out?", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Log Out", style: "destructive", onPress: logout },
+    ]);
   };
 
   return (
@@ -163,12 +159,30 @@ export default function CaregiverDashboard() {
         }
         scrollEnabled={!!filtered.length}
         ListEmptyComponent={
-          <View style={styles.empty}>
-            <Feather name="users" size={42} color={colors.border} />
-            <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-              No care receivers to show
-            </Text>
-          </View>
+          loading ? null : (
+            <View style={styles.empty}>
+              <View style={[styles.emptyIcon, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <Feather name="user-plus" size={36} color={colors.accent} />
+              </View>
+              <Text style={[styles.emptyTitle, { color: colors.text }]}>No Care Receivers Yet</Text>
+              <Text style={[styles.emptyBody, { color: colors.mutedForeground }]}>
+                Share the app with the person you're monitoring. They sign up as a Care Receiver and add your email as their caregiver.
+              </Text>
+              <Pressable
+                style={[styles.inviteBtn, { backgroundColor: colors.accent }]}
+                onPress={() => {
+                  Alert.alert(
+                    "Invite a Care Receiver",
+                    "Have them download Terra Call, sign up as a Care Receiver, and add your email address:\n\n" + (user?.email ?? "your email") + "\n\nThey'll appear on your dashboard automatically.",
+                    [{ text: "Got it" }]
+                  );
+                }}
+              >
+                <Feather name="user-plus" size={16} color="#060a18" />
+                <Text style={styles.inviteBtnText}>How to Invite</Text>
+              </Pressable>
+            </View>
+          )
         }
       />
     </View>
@@ -211,6 +225,26 @@ const styles = StyleSheet.create({
   },
   filterText: { fontSize: 13, fontWeight: "600", fontFamily: "Inter_600SemiBold" },
   list: { paddingHorizontal: 20, gap: 12 },
-  empty: { alignItems: "center", paddingVertical: 64, gap: 14 },
-  emptyText: { fontSize: 15, fontFamily: "Inter_400Regular" },
+  empty: { alignItems: "center", paddingVertical: 48, paddingHorizontal: 32, gap: 16 },
+  emptyIcon: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 4,
+  },
+  emptyTitle: { fontSize: 20, fontWeight: "700", fontFamily: "Inter_700Bold", textAlign: "center" },
+  emptyBody: { fontSize: 14, lineHeight: 22, textAlign: "center", fontFamily: "Inter_400Regular" },
+  inviteBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 24,
+    paddingVertical: 13,
+    borderRadius: 12,
+    marginTop: 4,
+  },
+  inviteBtnText: { fontSize: 15, fontWeight: "700", color: "#060a18", fontFamily: "Inter_700Bold" },
 });

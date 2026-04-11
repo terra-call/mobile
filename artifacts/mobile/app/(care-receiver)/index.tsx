@@ -10,6 +10,7 @@ import {
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -172,13 +173,15 @@ function EmergencyModal({
 
 export default function CareReceiverHome() {
   const { user, logout } = useAuth();
-  const { lastCheckIn, checkIn } = useCareData();
+  const { lastCheckIn, checkInHistory, checkIn } = useCareData();
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const [justCheckedIn, setJustCheckedIn] = useState(false);
   const [showEmergency, setShowEmergency] = useState(false);
   const [caregiverName, setCaregiverName] = useState<string | null>(null);
   const [caregiverPhone, setCaregiverPhone] = useState<string | null>(null);
+  const confirmScale = useRef(new Animated.Value(0)).current;
+  const confirmOpacity = useRef(new Animated.Value(0)).current;
 
   const topPadding = Platform.OS === "web" ? 67 : insets.top;
   const bottomPadding = Platform.OS === "web" ? 34 : insets.bottom;
@@ -202,21 +205,27 @@ export default function CareReceiverHome() {
     try {
       await checkIn();
       setJustCheckedIn(true);
-      setTimeout(() => setJustCheckedIn(false), 4000);
+      confirmScale.setValue(0.5);
+      confirmOpacity.setValue(0);
+      Animated.parallel([
+        Animated.spring(confirmScale, { toValue: 1, useNativeDriver: true, tension: 80, friction: 6 }),
+        Animated.timing(confirmOpacity, { toValue: 1, duration: 200, useNativeDriver: true }),
+      ]).start();
+      setTimeout(() => {
+        Animated.timing(confirmOpacity, { toValue: 0, duration: 400, useNativeDriver: true }).start(() => {
+          setJustCheckedIn(false);
+        });
+      }, 3500);
     } catch {
       Alert.alert("Error", "Could not complete check-in. Please try again.");
     }
   };
 
   const handleLogout = () => {
-    if (Platform.OS === "web") {
-      logout();
-    } else {
-      Alert.alert("Log Out", "Are you sure you want to log out?", [
-        { text: "Cancel", style: "cancel" },
-        { text: "Log Out", style: "destructive", onPress: logout },
-      ]);
-    }
+    Alert.alert("Log Out", "Are you sure you want to log out?", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Log Out", style: "destructive", onPress: logout },
+    ]);
   };
 
   return (
@@ -252,12 +261,21 @@ export default function CareReceiverHome() {
         </View>
       </View>
 
-      <View style={styles.content}>
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+      >
         {justCheckedIn ? (
-          <View style={styles.confirmedBadge}>
-            <Feather name="check-circle" size={20} color={colors.primary} />
-            <Text style={[styles.confirmedText, { color: colors.primary }]}>Your caregiver has been notified!</Text>
-          </View>
+          <Animated.View
+            style={[
+              styles.confirmedBadge,
+              { transform: [{ scale: confirmScale }], opacity: confirmOpacity },
+            ]}
+          >
+            <Feather name="check-circle" size={22} color={colors.primary} />
+            <Text style={[styles.confirmedText, { color: colors.primary }]}>Check-in recorded!</Text>
+          </Animated.View>
         ) : (
           <Text style={[styles.instruction, { color: colors.mutedForeground }]}>
             Tap the button to check in
@@ -274,7 +292,31 @@ export default function CareReceiverHome() {
             </Text>
           </View>
         )}
-      </View>
+
+        {checkInHistory.length > 0 && (
+          <View style={[styles.historyCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <View style={styles.historyHeader}>
+              <Feather name="list" size={14} color={colors.accent} />
+              <Text style={[styles.historyTitle, { color: colors.mutedForeground }]}>Recent Check-Ins</Text>
+            </View>
+            {checkInHistory.map((ts, i) => {
+              const date = new Date(ts);
+              const dateStr = date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+              const timeStr = date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+              return (
+                <View
+                  key={ts}
+                  style={[styles.historyRow, i < checkInHistory.length - 1 && { borderBottomWidth: 1, borderBottomColor: colors.border }]}
+                >
+                  <View style={[styles.historyDot, { backgroundColor: colors.primary }]} />
+                  <Text style={[styles.historyDate, { color: colors.text }]}>{dateStr}</Text>
+                  <Text style={[styles.historyTime, { color: colors.mutedForeground }]}>{timeStr}</Text>
+                </View>
+              );
+            })}
+          </View>
+        )}
+      </ScrollView>
 
       <View style={[styles.footer, { paddingBottom: bottomPadding + 20 }]}>
         <Text style={[styles.helpText, { color: colors.mutedForeground }]}>
@@ -306,10 +348,12 @@ const styles = StyleSheet.create({
   appName: { fontSize: 14, fontWeight: "800", letterSpacing: 2, fontFamily: "Inter_700Bold" },
   greeting: { fontSize: 13, marginTop: 1, fontFamily: "Inter_400Regular" },
   content: {
-    flex: 1,
+    flexGrow: 1,
     alignItems: "center",
     justifyContent: "center",
     gap: 24,
+    paddingHorizontal: 24,
+    paddingBottom: 24,
   },
   instruction: { fontSize: 16, fontFamily: "Inter_400Regular" },
   confirmedBadge: {
@@ -342,6 +386,36 @@ const styles = StyleSheet.create({
   emergencyHelpText: { fontSize: 14, fontWeight: "600", fontFamily: "Inter_600SemiBold" },
   headerActions: { flexDirection: "row", alignItems: "center", gap: 18 },
   logOutText: { fontSize: 14, fontWeight: "600", fontFamily: "Inter_600SemiBold" },
+  historyCard: {
+    width: "100%",
+    borderRadius: 16,
+    borderWidth: 1,
+    overflow: "hidden",
+  },
+  historyHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  historyTitle: {
+    fontSize: 12,
+    fontWeight: "600",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+    fontFamily: "Inter_600SemiBold",
+  },
+  historyRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    gap: 12,
+  },
+  historyDot: { width: 7, height: 7, borderRadius: 4 },
+  historyDate: { fontSize: 14, fontFamily: "Inter_500Medium", flex: 1 },
+  historyTime: { fontSize: 13, fontFamily: "Inter_400Regular" },
 });
 
 const eStyles = StyleSheet.create({
