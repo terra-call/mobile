@@ -53,7 +53,7 @@ export default function CaregiverDashboard() {
   };
 
   const handleEmergency = (receiver: CareReceiver) => {
-    router.push({ pathname: "/emergency-call", params: { receiverName: receiver.name, receiverId: receiver.id } });
+    router.push({ pathname: "/emergency-call", params: { receiverName: receiver.name, receiverId: receiver.id, receiverPhone: receiver.phone ?? "" } });
   };
 
   const handleLogout = () => {

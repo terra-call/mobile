@@ -6,9 +6,10 @@ import { Alert, Animated, Linking, Platform, Pressable, StyleSheet, Text, View }
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 export default function EmergencyCallScreen() {
-  const { receiverName, receiverId } = useLocalSearchParams<{
+  const { receiverName, receiverId, receiverPhone } = useLocalSearchParams<{
     receiverName?: string;
     receiverId?: string;
+    receiverPhone?: string;
   }>();
   const insets = useSafeAreaInsets();
 
@@ -57,12 +58,25 @@ export default function EmergencyCallScreen() {
     }
   };
 
+  // TEMPORARY — Replace with Twilio Voice VoIP call in Week 4-5 build
+  // This currently opens the native dialer as a placeholder
   const callDevice = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    Alert.alert(
-      "Calling Device",
-      `Initiating VoIP call to ${receiverName ?? "care receiver"}'s device.\n\nFull Twilio integration required for production calling.`
-    );
+    if (!receiverPhone || !receiverPhone.trim()) {
+      Alert.alert(
+        "No Phone Number",
+        `${receiverName ?? "This care receiver"} hasn't added a phone number to their profile yet.`
+      );
+      return;
+    }
+    const digits = receiverPhone.replace(/\D/g, "");
+    const url = `tel:${digits}`;
+    const canOpen = await Linking.canOpenURL(url).catch(() => false);
+    if (canOpen) {
+      Linking.openURL(url);
+    } else {
+      Alert.alert("Call Device", `Please dial ${receiverPhone} manually.`);
+    }
   };
 
   return (
