@@ -173,7 +173,7 @@ function EmergencyModal({
 
 export default function CareReceiverHome() {
   const { user, logout } = useAuth();
-  const { lastCheckIn, checkInHistory, checkIn } = useCareData();
+  const { lastCheckIn, checkInHistory, checkIn, triggerEmergency } = useCareData();
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const [justCheckedIn, setJustCheckedIn] = useState(false);
@@ -182,6 +182,7 @@ export default function CareReceiverHome() {
   const [caregiverPhone, setCaregiverPhone] = useState<string | null>(null);
   const confirmScale = useRef(new Animated.Value(0)).current;
   const confirmOpacity = useRef(new Animated.Value(0)).current;
+  const [emergencySending, setEmergencySending] = useState(false);
 
   const topPadding = Platform.OS === "web" ? 67 : insets.top;
   const bottomPadding = Platform.OS === "web" ? 34 : insets.bottom;
@@ -219,6 +220,39 @@ export default function CareReceiverHome() {
     } catch {
       Alert.alert("Error", "Could not complete check-in. Please try again.");
     }
+  };
+
+  // I'M NOT OK — manually triggered emergency by care receiver
+  // Bypasses check-in timer entirely — immediate alert to caregiver
+  const handleEmergencyAlert = () => {
+    Alert.alert(
+      "Send Emergency Alert?",
+      "This will immediately notify your caregiver that you need help. Are you sure?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Yes, I Need Help",
+          style: "destructive",
+          onPress: async () => {
+            setEmergencySending(true);
+            try {
+              await triggerEmergency();
+              if (Platform.OS !== "web") {
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
+              }
+              Alert.alert(
+                "Alert Sent",
+                "Your caregiver has been notified immediately. Stay safe — help is on the way."
+              );
+            } catch {
+              Alert.alert("Error", "Could not send alert. Please try again or call for help directly.");
+            } finally {
+              setEmergencySending(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleLogout = () => {
@@ -283,6 +317,17 @@ export default function CareReceiverHome() {
         )}
 
         <CheckInButton onPress={handleCheckIn} />
+
+        <Pressable
+          style={[styles.notOkButton, { borderColor: colors.destructive + "55" }]}
+          onPress={handleEmergencyAlert}
+          disabled={emergencySending}
+        >
+          <Feather name="alert-circle" size={16} color={colors.destructive} />
+          <Text style={[styles.notOkText, { color: colors.destructive }]}>
+            {emergencySending ? "Sending Alert..." : "I'M NOT OK"}
+          </Text>
+        </Pressable>
 
         {lastCheckIn && (
           <View style={styles.lastCheckInRow}>
@@ -386,6 +431,22 @@ const styles = StyleSheet.create({
   emergencyHelpText: { fontSize: 14, fontWeight: "600", fontFamily: "Inter_600SemiBold" },
   headerActions: { flexDirection: "row", alignItems: "center", gap: 18 },
   logOutText: { fontSize: 14, fontWeight: "600", fontFamily: "Inter_600SemiBold" },
+  notOkButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingVertical: 13,
+    paddingHorizontal: 28,
+  },
+  notOkText: {
+    fontSize: 15,
+    fontWeight: "700",
+    letterSpacing: 1,
+    fontFamily: "Inter_700Bold",
+  },
   historyCard: {
     width: "100%",
     borderRadius: 16,

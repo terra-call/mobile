@@ -38,6 +38,7 @@ interface CareDataContextValue {
   lastCheckIn: string | null;
   checkInHistory: string[];
   checkIn: () => Promise<void>;
+  triggerEmergency: () => Promise<void>;
   loading: boolean;
   refreshStatus: () => void;
 }
@@ -290,6 +291,34 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
     callNotifyApi("/notify/checkin", { userId: user.id, checkedInAt: now }).catch(() => {});
   }, [user]);
 
+  // I'M NOT OK — manually triggered emergency by care receiver
+  // Bypasses check-in timer entirely — immediate alert to caregiver
+  const triggerEmergency = useCallback(async () => {
+    if (!user) return;
+    const receiverName = user.name ?? "Care Receiver";
+
+    if (isFirebaseConfigured && db) {
+      await updateDoc(doc(db, "users", user.id), { status: "emergency" });
+    }
+
+    const contacts = await getCaregiverContacts(permittedCaregiversRef.current);
+    const cgTokens = contacts.map((c) => c.pushToken).filter(Boolean) as string[];
+    const cgPhones = contacts.map((c) => c.phone).filter(Boolean) as string[];
+
+    if (cgTokens.length > 0) {
+      await sendExpoPushNotification(
+        cgTokens,
+        `🚨 EMERGENCY — ${receiverName}`,
+        `${receiverName} has indicated they need help immediately.`,
+        { type: "manual_emergency", userId: user.id }
+      );
+    }
+
+    if (cgPhones.length > 0) {
+      await triggerSmsAlert(cgPhones, receiverName, "manual_emergency", 0);
+    }
+  }, [user]);
+
   const refreshStatus = useCallback(() => {
     if (!user || isFirebaseConfigured) return;
     AsyncStorage.getItem(`${RECEIVERS_KEY}:${user.id}`).then((val) => {
@@ -299,7 +328,7 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <CareDataContext.Provider
-      value={{ careReceivers, lastCheckIn, checkInHistory, checkIn, loading, refreshStatus }}
+      value={{ careReceivers, lastCheckIn, checkInHistory, checkIn, triggerEmergency, loading, refreshStatus }}
     >
       {children}
     </CareDataContext.Provider>

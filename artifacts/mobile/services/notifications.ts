@@ -206,7 +206,7 @@ export async function callNotifyApi(
 export async function triggerSmsAlert(
   phones: string[],
   receiverName: string,
-  status: "missed" | "emergency",
+  status: "missed" | "emergency" | "manual_emergency",
   minutesSinceDue: number
 ): Promise<void> {
   await callNotifyApi("/notify/sms", { phones, receiverName, status, minutesSinceDue });

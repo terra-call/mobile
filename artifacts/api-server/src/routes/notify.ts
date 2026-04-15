@@ -49,7 +49,7 @@ router.post("/notify/sms", async (req, res) => {
   const { phones, receiverName, status, minutesSinceDue } = req.body as {
     phones: string[];
     receiverName: string;
-    status: "missed" | "emergency";
+    status: "missed" | "emergency" | "manual_emergency";
     minutesSinceDue?: number;
   };
 

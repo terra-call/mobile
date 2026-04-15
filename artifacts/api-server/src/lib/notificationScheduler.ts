@@ -90,15 +90,17 @@ export function getSchedule(userId: string): ScheduleEntry | undefined {
 export async function sendDirectSms(
   phones: string[],
   receiverName: string,
-  status: "missed" | "emergency",
+  status: "missed" | "emergency" | "manual_emergency",
   minutesSinceDue: number
 ): Promise<void> {
   if (!isSmsConfigured() || phones.length === 0) return;
 
   const body =
-    status === "missed"
-      ? `Terra Call Alert: ${receiverName} has missed their scheduled check-in (${Math.round(minutesSinceDue)} min ago). Please check on them.`
-      : `URGENT – Terra Call: ${receiverName} has not checked in for ${Math.round(minutesSinceDue)} minutes. Immediate attention required.`;
+    status === "manual_emergency"
+      ? `🚨 URGENT – Terra Call: ${receiverName} has indicated they need help immediately. This was triggered manually — not a missed check-in. Please respond now.`
+      : status === "missed"
+        ? `Terra Call Alert: ${receiverName} has missed their scheduled check-in (${Math.round(minutesSinceDue)} min ago). Please check on them.`
+        : `URGENT – Terra Call: ${receiverName} has not checked in for ${Math.round(minutesSinceDue)} minutes. Immediate attention required.`;
 
   await sendSmsToMany(phones, body);
 }
