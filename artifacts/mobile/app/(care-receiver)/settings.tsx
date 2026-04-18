@@ -7,14 +7,9 @@ import {
 } from "firebase/auth";
 import {
   arrayRemove,
-  arrayUnion,
-  collection,
   doc,
   getDoc,
-  getDocs,
-  query,
   updateDoc,
-  where,
 } from "firebase/firestore";
 import { router } from "expo-router";
 import React, { useEffect, useState } from "react";
@@ -35,6 +30,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/contexts/AuthContext";
 import { useColors } from "@/hooks/useColors";
 import { auth, db, isFirebaseConfigured } from "@/services/firebase";
+import { redeemInvite } from "@/services/invites";
 import {
   type ScheduleType,
   scheduleCheckInReminders,
@@ -75,7 +71,7 @@ export default function SettingsScreen() {
   // Caregivers
   const [caregivers, setCaregivers] = useState<PermittedCaregiver[]>([]);
   const [caregiversLoading, setCaregiversLoading] = useState(true);
-  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
   const [inviting, setInviting] = useState(false);
 
   // Notification settings
@@ -203,52 +199,40 @@ export default function SettingsScreen() {
     }
   };
 
-  // ── Invite caregiver ──────────────────────────────────────────────────────
+  // ── Redeem caregiver invite code ─────────────────────────────────────────
   const inviteCaregiver = async () => {
-    const email = inviteEmail.trim().toLowerCase();
-    if (!email) return;
-    if (!user || !isFirebaseConfigured || !db) return;
+    const code = inviteCode.replace(/\D/g, "");
+    if (!code) return;
+    if (!user) return;
 
-    if (caregivers.some((c) => c.email.toLowerCase() === email)) {
-      Alert.alert("Already Added", "That caregiver already has access.");
+    if (code.length !== 6) {
+      Alert.alert("Invalid Code", "Please enter the 6-digit code from your caregiver.");
       return;
     }
 
     setInviting(true);
     try {
-      // Look up the caregiver by email
-      const q = query(
-        collection(db, "users"),
-        where("email", "==", email),
-        where("role", "==", "caregiver")
-      );
-      const snap = await getDocs(q);
+      const result = await redeemInvite(code, {
+        id: user.id,
+        permittedCaregivers: caregivers,
+      });
 
-      if (snap.empty) {
-        Alert.alert(
-          "Not Found",
-          "No caregiver account was found with that email. Make sure they have registered as a Caregiver."
-        );
+      if (result.ok) {
+        setCaregivers((prev) => [...prev, result.caregiver]);
+        setInviteCode("");
+        Alert.alert("Linked", `${result.caregiver.name} can now monitor your check-ins.`);
         return;
       }
 
-      const cgDoc = snap.docs[0];
-      const cgData = cgDoc.data();
-      const newCaregiver: PermittedCaregiver = {
-        id: cgDoc.id,
-        name: cgData.name ?? "Caregiver",
-        email: cgData.email ?? email,
+      const messages: Record<typeof result.reason, string> = {
+        "not-found": "We couldn't find that code. Double-check the digits with your caregiver.",
+        expired: "That code has expired. Ask your caregiver to generate a new one.",
+        redeemed: "That code has already been used. Ask your caregiver for a new one.",
+        self: "You can't use your own invite code.",
+        duplicate: "That caregiver already has access.",
+        error: "Could not link caregiver. Please try again.",
       };
-
-      await updateDoc(doc(db, "users", user.id), {
-        permittedCaregivers: arrayUnion(newCaregiver),
-      });
-
-      setCaregivers((prev) => [...prev, newCaregiver]);
-      setInviteEmail("");
-      Alert.alert("Added", `${newCaregiver.name} can now monitor your check-ins.`);
-    } catch {
-      Alert.alert("Error", "Could not add caregiver. Please try again.");
+      Alert.alert("Cannot Link", messages[result.reason]);
     } finally {
       setInviting(false);
     }
@@ -624,17 +608,16 @@ export default function SettingsScreen() {
             ))
           )}
 
-          {/* Invite input */}
+          {/* Invite code input */}
           <View style={styles.inviteRow}>
             <TextInput
-              style={[styles.input, styles.inviteInput, { backgroundColor: colors.card, borderColor: colors.border, color: colors.text }]}
-              value={inviteEmail}
-              onChangeText={setInviteEmail}
-              placeholder="Caregiver's email address"
+              style={[styles.input, styles.inviteInput, styles.inviteCodeInput, { backgroundColor: colors.card, borderColor: colors.border, color: colors.text }]}
+              value={inviteCode}
+              onChangeText={(t) => setInviteCode(t.replace(/\D/g, "").slice(0, 6))}
+              placeholder="6-digit code"
               placeholderTextColor={colors.mutedForeground}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              autoCorrect={false}
+              keyboardType="number-pad"
+              maxLength={6}
               returnKeyType="done"
               onSubmitEditing={inviteCaregiver}
             />
@@ -651,7 +634,7 @@ export default function SettingsScreen() {
             </Pressable>
           </View>
           <Text style={[styles.inviteHint, { color: colors.mutedForeground }]}>
-            The caregiver must already have a Terra Call account.
+            Ask your caregiver to generate an invite code in their app and share it with you.
           </Text>
         </Section>
       </ScrollView>
@@ -871,6 +854,13 @@ const styles = StyleSheet.create({
 
   inviteRow: { flexDirection: "row", gap: 10, alignItems: "center" },
   inviteInput: { flex: 1 },
+  inviteCodeInput: {
+    fontSize: 22,
+    letterSpacing: 6,
+    fontFamily: "Inter_700Bold",
+    fontWeight: "700",
+    textAlign: "center",
+  },
   inviteBtn: {
     width: 48,
     height: 48,

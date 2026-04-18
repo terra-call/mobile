@@ -32,6 +32,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/contexts/AuthContext";
 import { useColors } from "@/hooks/useColors";
 import { auth, db, isFirebaseConfigured } from "@/services/firebase";
+import { createInvite, sendInviteSms } from "@/services/invites";
 
 interface LinkedReceiver {
   id: string;
@@ -64,6 +65,58 @@ export default function CaregiverSettingsScreen() {
   // Linked care receivers
   const [receivers, setReceivers] = useState<LinkedReceiver[]>([]);
   const [receiversLoading, setReceiversLoading] = useState(true);
+
+  // Invite flow
+  const [inviteCode, setInviteCode] = useState<string | null>(null);
+  const [inviteExpiresAt, setInviteExpiresAt] = useState<string | null>(null);
+  const [inviteGenerating, setInviteGenerating] = useState(false);
+  const [invitePhone, setInvitePhone] = useState("");
+  const [inviteSmsSending, setInviteSmsSending] = useState(false);
+
+  const generateInviteCode = async () => {
+    if (!user) return;
+    setInviteGenerating(true);
+    try {
+      const result = await createInvite({
+        id: user.id,
+        name: user.name ?? "Caregiver",
+        email: user.email,
+      });
+      setInviteCode(result.code);
+      setInviteExpiresAt(result.expiresAt);
+    } catch {
+      Alert.alert("Error", "Could not generate an invite code. Please try again.");
+    } finally {
+      setInviteGenerating(false);
+    }
+  };
+
+  const textInviteCode = async () => {
+    if (!user || !inviteCode) return;
+    const phone = invitePhone.trim();
+    if (phone.length < 7) {
+      Alert.alert("Phone Required", "Enter the care receiver's phone number to text them the code.");
+      return;
+    }
+    setInviteSmsSending(true);
+    try {
+      const result = await sendInviteSms(phone, inviteCode, user.name ?? "Your caregiver");
+      if (result.ok) {
+        Alert.alert("Code Sent", `The invite code was texted to ${phone}.`);
+        setInvitePhone("");
+        return;
+      }
+      const messages = {
+        "rate-limited": "You've sent too many invite texts in the last hour. Try again later or share the code manually.",
+        invalid: "That phone number doesn't look right. Please check and try again.",
+        "send-failed": "We couldn't deliver the SMS. Double-check the number or share the code manually.",
+        network: "Couldn't reach the server. Check your connection and try again.",
+      } as const;
+      Alert.alert("Could Not Send", messages[result.reason]);
+    } finally {
+      setInviteSmsSending(false);
+    }
+  };
 
   // ── Load care receivers that have this caregiver in their permittedCaregivers ──
   useEffect(() => {
@@ -280,6 +333,63 @@ export default function CaregiverSettingsScreen() {
           </View>
         </View>
 
+        {/* ── Invite a Care Receiver ── */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>INVITE A CARE RECEIVER</Text>
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <Text style={[styles.sectionNote, { color: colors.mutedForeground }]}>
+              Generate a 6-digit code, then share it with the person you want to monitor. They enter it in their app to link with you. The code expires in 24 hours.
+            </Text>
+
+            {inviteCode ? (
+              <View style={[styles.codeBox, { backgroundColor: colors.background, borderColor: "#22FF6E55" }]}>
+                <Text style={[styles.codeLabel, { color: colors.mutedForeground }]}>YOUR INVITE CODE</Text>
+                <Text style={styles.codeText}>{inviteCode}</Text>
+                {inviteExpiresAt && (
+                  <Text style={[styles.codeExpiry, { color: colors.mutedForeground }]}>
+                    Expires {new Date(inviteExpiresAt).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                  </Text>
+                )}
+              </View>
+            ) : null}
+
+            <ActionButton
+              label={inviteCode ? "Generate Another Code" : "Generate Invite Code"}
+              loading={inviteGenerating}
+              onPress={generateInviteCode}
+              bg="#22FF6E"
+              fg="#060a18"
+            />
+
+            {inviteCode ? (
+              <>
+                <Text style={[styles.codeNote, { color: colors.mutedForeground }]}>
+                  Any previously generated codes also remain valid until they expire.
+                </Text>
+                <View style={[styles.divider, { backgroundColor: colors.border }]} />
+                <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>OR TEXT THE CODE TO THEM</Text>
+                <View style={styles.field}>
+                  <TextInput
+                    style={[styles.input, { backgroundColor: colors.background, borderColor: colors.border, color: colors.text }]}
+                    value={invitePhone}
+                    onChangeText={setInvitePhone}
+                    placeholder="+1 (555) 000-0000"
+                    placeholderTextColor={colors.mutedForeground}
+                    keyboardType="phone-pad"
+                  />
+                </View>
+                <ActionButton
+                  label="Text This Code"
+                  loading={inviteSmsSending}
+                  onPress={textInviteCode}
+                  bg="#00C8FF"
+                  fg="#060a18"
+                />
+              </>
+            ) : null}
+          </View>
+        </View>
+
         {/* ── My Care Receivers ── */}
         <View style={styles.section}>
           <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>MY CARE RECEIVERS</Text>
@@ -469,6 +579,41 @@ const styles = StyleSheet.create({
   roleText: { fontSize: 11, fontWeight: "700", fontFamily: "Inter_700Bold", letterSpacing: 0.5 },
 
   separator: { height: 1, marginHorizontal: -4 },
+  divider: { height: 1, marginVertical: 4 },
+  codeBox: {
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingVertical: 22,
+    paddingHorizontal: 20,
+    alignItems: "center",
+    gap: 6,
+  },
+  codeLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 1.5,
+    fontFamily: "Inter_700Bold",
+  },
+  codeText: {
+    color: "#22FF6E",
+    fontSize: 40,
+    fontWeight: "800",
+    letterSpacing: 8,
+    fontFamily: "Inter_700Bold",
+    marginTop: 4,
+  },
+  codeExpiry: {
+    fontSize: 12,
+    marginTop: 4,
+    fontFamily: "Inter_400Regular",
+  },
+  codeNote: {
+    fontSize: 12,
+    fontFamily: "Inter_400Regular",
+    fontStyle: "italic",
+    textAlign: "center",
+    marginTop: -4,
+  },
   logoutRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 4 },
   logoutText: { fontSize: 15, fontWeight: "600", fontFamily: "Inter_600SemiBold" },
 });

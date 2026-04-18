@@ -16,8 +16,11 @@ React Native mobile app (Expo) that lets care receivers tap a big "I'M OK" butto
 
 ### Artifacts
 - `artifacts/mobile` — Expo React Native app (slug: `mobile`, previewPath: `/`)
-- `artifacts/api-server` — Express API server (port 8080)
+- `artifacts/api-server` — Express API server (port 8080, all routes mounted under `/api`)
 - `artifacts/mockup-sandbox` — Vite component preview server
+
+### Caregiver Linking (Invite Code System)
+Caregivers generate a 6-digit invite code in their Settings screen. The code is stored in Firestore as `invites/{code}` with `caregiverId`, `caregiverName`, `caregiverEmail`, `expiresAt` (24h TTL), and `redeemedBy` (null until used). Caregivers can optionally text the code to a phone number via Twilio (POST `/api/invites/sms`, rate-limited to 10/IP/hour). Care receivers enter the code in their Settings → Caregivers section; redemption uses a Firestore transaction (`runTransaction`) to atomically link the caregiver to `permittedCaregivers` and mark the invite as redeemed (single-use). Service: `artifacts/mobile/services/invites.ts`.
 
 ### Key Files
 ```
