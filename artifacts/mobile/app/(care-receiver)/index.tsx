@@ -258,6 +258,13 @@ export default function CareReceiverHome() {
   };
 
   const handleLogout = () => {
+    if (Platform.OS === "web") {
+      // Alert.alert's multi-button form is unreliable on react-native-web
+      // (button order gets inverted in the underlying window.confirm).
+      const ok = typeof window !== "undefined" ? window.confirm("Log out of Terra Call?") : true;
+      if (ok) logout();
+      return;
+    }
     Alert.alert("Log Out", "Are you sure you want to log out?", [
       { text: "Cancel", style: "cancel" },
       { text: "Log Out", style: "destructive", onPress: logout },
