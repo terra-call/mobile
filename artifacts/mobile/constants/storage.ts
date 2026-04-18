@@ -4,4 +4,5 @@ export const STORAGE_KEYS = {
   PROFILES: "@terra:profiles",
   CHECK_IN: "@terra:checkIn",
   RECEIVERS: "@terra:receivers",
+  NOTIF_PROMPT_SEEN: "@terra:notif_prompt_seen",
 };

@@ -18,10 +18,12 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { collection, getDocs, query, where } from "firebase/firestore";
 import { CheckInButton } from "@/components/CheckInButton";
+import { NotificationPermissionPrompt } from "@/components/NotificationPermissionPrompt";
 import { useAuth } from "@/contexts/AuthContext";
 import { useCareData } from "@/contexts/CareDataContext";
 import { useColors } from "@/hooks/useColors";
 import { db, isFirebaseConfigured } from "@/services/firebase";
+import { registerForPushNotifications } from "@/services/notifications";
 import { formatTimeAgo } from "@/utils/time";
 
 function EmergencyModal({
@@ -270,6 +272,14 @@ export default function CareReceiverHome() {
         caregiverPhone={caregiverPhone}
         onDismiss={() => setShowEmergency(false)}
       />
+
+      {!showEmergency && (
+        <NotificationPermissionPrompt
+          onGranted={() => {
+            if (user?.id) registerForPushNotifications(user.id);
+          }}
+        />
+      )}
 
       <View style={[styles.header, { paddingTop: topPadding + 16 }]}>
         <View style={styles.headerLeft}>

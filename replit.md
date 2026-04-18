@@ -112,7 +112,8 @@ expoPushToken: string (Expo push token, set on login)
 - **Local reminders**: Scheduled on care receiver's device at configured interval (works in Expo Go on real device; requires native build for reliable background delivery)
 - **Caregiver alerts**: Care receiver's app monitors status every 60s; if missed/emergency window exceeded, sends push notification to caregivers' Expo push tokens via `https://exp.host/--/api/v2/push/send`
 - **API server scheduler**: Runs every 60s; receives schedules via `POST /api/notify/schedule`, check-ins via `POST /api/notify/checkin`, sends direct pushes via `POST /api/notify/send`
-- **Token registration**: Occurs at login for care receivers; token saved to `users/{uid}.expoPushToken`
+- **Token registration**: Passive — `registerForPushNotifications` only fetches/stores token if permission is ALREADY granted. Token saved to `users/{uid}.expoPushToken`
+- **Friendly pre-prompt**: `<NotificationPermissionPrompt />` in care-receiver home shows a branded modal explaining the value before triggering OS dialog. Uses `getNotificationPermissionStatus()` (passive check) + `requestNotificationPermissions()` (explicit request). Dismissal tracked via `STORAGE_KEYS.NOTIF_PROMPT_SEEN` so user only sees it once.
 - **Native build required** for: reliable background delivery, Expo push token issuance from EAS
 
 ### API Server Notification Endpoints

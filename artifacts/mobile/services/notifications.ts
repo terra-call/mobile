@@ -35,20 +35,45 @@ Notifications.setNotificationHandler({
   }),
 });
 
+// ── Permission helpers ────────────────────────────────────────────────────────
+// "undetermined" = OS hasn't been asked yet (so we can show the pre-prompt and
+// then trigger the system dialog). "denied" = user said no — we cannot re-ask
+// programmatically; they must enable it from Settings.
+export type NotifPermStatus = "granted" | "denied" | "undetermined";
+
+export async function getNotificationPermissionStatus(): Promise<NotifPermStatus> {
+  if (Platform.OS === "web") return "denied";
+  try {
+    const { status } = await Notifications.getPermissionsAsync();
+    if (status === "granted") return "granted";
+    if (status === "undetermined") return "undetermined";
+    return "denied";
+  } catch {
+    return "denied";
+  }
+}
+
+// Triggers the OS permission dialog. Only call this AFTER the user has opted
+// in via our friendly pre-prompt. Returns true if they granted access.
+export async function requestNotificationPermissions(): Promise<boolean> {
+  if (Platform.OS === "web") return false;
+  try {
+    const { status } = await Notifications.requestPermissionsAsync();
+    return status === "granted";
+  } catch {
+    return false;
+  }
+}
+
 // ── Push token registration ───────────────────────────────────────────────────
+// Passive: only fetches and stores a push token if permission is ALREADY
+// granted. Does NOT trigger the OS dialog. The friendly pre-prompt handles that.
 export async function registerForPushNotifications(userId: string): Promise<string | null> {
   if (Platform.OS === "web") return null;
 
   try {
-    const { status: existing } = await Notifications.getPermissionsAsync();
-    let finalStatus = existing;
-
-    if (existing !== "granted") {
-      const { status } = await Notifications.requestPermissionsAsync();
-      finalStatus = status;
-    }
-
-    if (finalStatus !== "granted") return null;
+    const { status } = await Notifications.getPermissionsAsync();
+    if (status !== "granted") return null;
 
     // Get Expo push token (requires EAS project ID for remote delivery;
     // token registration gracefully skips if not configured)
