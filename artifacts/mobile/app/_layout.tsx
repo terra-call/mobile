@@ -10,7 +10,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Stack, router, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect, useRef, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { Platform, StyleSheet, Text, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -159,6 +159,27 @@ export default function RootLayout() {
       SplashScreen.hideAsync();
     }
   }, [fontsLoaded, fontError]);
+
+  // Web only: make the default scrollbar visible against the dark background
+  useEffect(() => {
+    if (Platform.OS !== "web" || typeof document === "undefined") return;
+    const id = "terra-scrollbar-style";
+    if (document.getElementById(id)) return;
+    const style = document.createElement("style");
+    style.id = id;
+    style.textContent = `
+      *::-webkit-scrollbar { width: 10px; height: 10px; }
+      *::-webkit-scrollbar-track { background: #0c1628; }
+      *::-webkit-scrollbar-thumb {
+        background: #22FF6E66;
+        border-radius: 5px;
+        border: 2px solid #0c1628;
+      }
+      *::-webkit-scrollbar-thumb:hover { background: #22FF6Eaa; }
+      * { scrollbar-color: #22FF6E66 #0c1628; scrollbar-width: thin; }
+    `;
+    document.head.appendChild(style);
+  }, []);
 
   if (!fontsLoaded && !fontError) {
     return (
