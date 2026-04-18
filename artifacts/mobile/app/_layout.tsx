@@ -168,15 +168,17 @@ export default function RootLayout() {
     const style = document.createElement("style");
     style.id = id;
     style.textContent = `
-      *::-webkit-scrollbar { width: 10px; height: 10px; }
-      *::-webkit-scrollbar-track { background: #0c1628; }
+      html, body, * { scrollbar-color: #22FF6Eaa #0c1628 !important; scrollbar-width: auto !important; }
+      *::-webkit-scrollbar { width: 12px !important; height: 12px !important; display: block !important; }
+      *::-webkit-scrollbar-track { background: #0c1628 !important; }
       *::-webkit-scrollbar-thumb {
-        background: #22FF6E66;
-        border-radius: 5px;
-        border: 2px solid #0c1628;
+        background: #22FF6Eaa !important;
+        border-radius: 6px !important;
+        border: 2px solid #0c1628 !important;
+        min-height: 40px !important;
       }
-      *::-webkit-scrollbar-thumb:hover { background: #22FF6Eaa; }
-      * { scrollbar-color: #22FF6E66 #0c1628; scrollbar-width: thin; }
+      *::-webkit-scrollbar-thumb:hover { background: #22FF6E !important; }
+      *::-webkit-scrollbar-corner { background: #0c1628 !important; }
     `;
     document.head.appendChild(style);
   }, []);
