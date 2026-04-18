@@ -511,30 +511,18 @@ export default function SettingsScreen() {
                 </View>
               </Field>
 
-              {/* Custom time inputs */}
+              {/* Custom time picker (12-hour with AM/PM) */}
               {scheduleType === "custom" && (
-                <Field label="Daily reminder time (24h format)" colors={colors}>
-                  <View style={styles.timeRow}>
-                    <TextInput
-                      style={[styles.input, styles.timeInput, { backgroundColor: colors.card, borderColor: colors.border, color: colors.text }]}
-                      value={String(customHour).padStart(2, "0")}
-                      onChangeText={(v) => setCustomHour(Math.max(0, Math.min(23, parseInt(v, 10) || 0)))}
-                      keyboardType="number-pad"
-                      maxLength={2}
-                      placeholder="HH"
-                      placeholderTextColor={colors.mutedForeground}
-                    />
-                    <Text style={[styles.timeSep, { color: colors.text }]}>:</Text>
-                    <TextInput
-                      style={[styles.input, styles.timeInput, { backgroundColor: colors.card, borderColor: colors.border, color: colors.text }]}
-                      value={String(customMinute).padStart(2, "0")}
-                      onChangeText={(v) => setCustomMinute(Math.max(0, Math.min(59, parseInt(v, 10) || 0)))}
-                      keyboardType="number-pad"
-                      maxLength={2}
-                      placeholder="MM"
-                      placeholderTextColor={colors.mutedForeground}
-                    />
-                  </View>
+                <Field label="Daily reminder time" colors={colors}>
+                  <TimePicker12h
+                    hour24={customHour}
+                    minute={customMinute}
+                    onChange={(h, m) => {
+                      setCustomHour(h);
+                      setCustomMinute(m);
+                    }}
+                    colors={colors}
+                  />
                 </Field>
               )}
 
@@ -662,6 +650,126 @@ function Section({
       <Text style={[styles.sectionTitle, { color: colors.mutedForeground }]}>{title}</Text>
       <View style={[styles.sectionCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
         {children}
+      </View>
+    </View>
+  );
+}
+
+function TimePicker12h({
+  hour24,
+  minute,
+  onChange,
+  colors,
+}: {
+  hour24: number;
+  minute: number;
+  onChange: (hour24: number, minute: number) => void;
+  colors: ReturnType<typeof import("@/hooks/useColors").useColors>;
+}) {
+  // Convert 24h → 12h display
+  const period: "AM" | "PM" = hour24 >= 12 ? "PM" : "AM";
+  const hour12 = ((hour24 + 11) % 12) + 1; // 0→12, 13→1, etc.
+
+  const setFrom12h = (h12: number, m: number, p: "AM" | "PM") => {
+    let h24 = h12 % 12; // 12 → 0
+    if (p === "PM") h24 += 12;
+    onChange(h24, m);
+  };
+
+  const stepHour = (delta: number) => {
+    const next = ((hour12 - 1 + delta + 12) % 12) + 1;
+    setFrom12h(next, minute, period);
+  };
+
+  const stepMinute = (delta: number) => {
+    // step by 5 minutes, wrap 0..55
+    const next = ((minute + delta * 5) % 60 + 60) % 60;
+    setFrom12h(hour12, next, period);
+  };
+
+  const setPeriod = (p: "AM" | "PM") => {
+    if (p === period) return;
+    setFrom12h(hour12, minute, p);
+  };
+
+  return (
+    <View style={styles.timePickerRow}>
+      {/* Hour */}
+      <View style={[styles.timeUnit, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <Pressable
+          onPress={() => stepHour(1)}
+          hitSlop={8}
+          style={({ pressed }) => [styles.stepBtn, pressed && { opacity: 0.5 }]}
+        >
+          <Feather name="chevron-up" size={20} color={colors.primary} />
+        </Pressable>
+        <Text style={[styles.timeValue, { color: colors.text }]}>{String(hour12).padStart(2, "0")}</Text>
+        <Pressable
+          onPress={() => stepHour(-1)}
+          hitSlop={8}
+          style={({ pressed }) => [styles.stepBtn, pressed && { opacity: 0.5 }]}
+        >
+          <Feather name="chevron-down" size={20} color={colors.primary} />
+        </Pressable>
+        <Text style={[styles.timeUnitLabel, { color: colors.mutedForeground }]}>HOUR</Text>
+      </View>
+
+      <Text style={[styles.timeBigSep, { color: colors.text }]}>:</Text>
+
+      {/* Minute */}
+      <View style={[styles.timeUnit, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <Pressable
+          onPress={() => stepMinute(1)}
+          hitSlop={8}
+          style={({ pressed }) => [styles.stepBtn, pressed && { opacity: 0.5 }]}
+        >
+          <Feather name="chevron-up" size={20} color={colors.primary} />
+        </Pressable>
+        <Text style={[styles.timeValue, { color: colors.text }]}>{String(minute).padStart(2, "0")}</Text>
+        <Pressable
+          onPress={() => stepMinute(-1)}
+          hitSlop={8}
+          style={({ pressed }) => [styles.stepBtn, pressed && { opacity: 0.5 }]}
+        >
+          <Feather name="chevron-down" size={20} color={colors.primary} />
+        </Pressable>
+        <Text style={[styles.timeUnitLabel, { color: colors.mutedForeground }]}>MIN</Text>
+      </View>
+
+      {/* AM/PM toggle */}
+      <View style={[styles.periodCol, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <Pressable
+          onPress={() => setPeriod("AM")}
+          style={[
+            styles.periodBtn,
+            period === "AM" && { backgroundColor: colors.primary },
+          ]}
+        >
+          <Text
+            style={[
+              styles.periodText,
+              { color: period === "AM" ? colors.primaryForeground : colors.mutedForeground },
+            ]}
+          >
+            AM
+          </Text>
+        </Pressable>
+        <Pressable
+          onPress={() => setPeriod("PM")}
+          style={[
+            styles.periodBtn,
+            period === "PM" && { backgroundColor: colors.primary },
+          ]}
+        >
+          <Text
+            style={[
+              styles.periodText,
+              { color: period === "PM" ? colors.primaryForeground : colors.mutedForeground },
+            ]}
+          >
+            PM
+          </Text>
+        </Pressable>
       </View>
     </View>
   );
@@ -828,6 +936,69 @@ const styles = StyleSheet.create({
   timeRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   timeInput: { width: 64, textAlign: "center" },
   timeSep: { fontSize: 22, fontWeight: "600", fontFamily: "Inter_600SemiBold" },
+
+  timePickerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    paddingVertical: 4,
+  },
+  timeUnit: {
+    width: 78,
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingVertical: 10,
+    alignItems: "center",
+    gap: 4,
+  },
+  stepBtn: {
+    width: 40,
+    height: 28,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 8,
+  },
+  timeValue: {
+    fontSize: 28,
+    fontWeight: "700",
+    fontFamily: "Inter_700Bold",
+    fontVariant: ["tabular-nums"],
+    minWidth: 48,
+    textAlign: "center",
+  },
+  timeUnitLabel: {
+    fontSize: 9,
+    fontWeight: "700",
+    letterSpacing: 1.2,
+    fontFamily: "Inter_700Bold",
+    marginTop: 2,
+  },
+  timeBigSep: {
+    fontSize: 30,
+    fontWeight: "700",
+    fontFamily: "Inter_700Bold",
+    marginTop: -8,
+  },
+  periodCol: {
+    borderRadius: 14,
+    borderWidth: 1,
+    overflow: "hidden",
+    marginLeft: 4,
+  },
+  periodBtn: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    minWidth: 56,
+  },
+  periodText: {
+    fontSize: 13,
+    fontWeight: "700",
+    letterSpacing: 1.0,
+    fontFamily: "Inter_700Bold",
+  },
 
   caregiverRow: {
     flexDirection: "row",
