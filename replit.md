@@ -22,6 +22,27 @@ React Native mobile app (Expo) that lets care receivers tap a big "I'M OK" butto
 ### Caregiver Linking (Invite Code System)
 Caregivers generate a 6-digit invite code in their Settings screen. The code is stored in Firestore as `invites/{code}` with `caregiverId`, `caregiverName`, `caregiverEmail`, `expiresAt` (24h TTL), and `redeemedBy` (null until used). Caregivers can optionally text the code to a phone number via Twilio (POST `/api/invites/sms`, rate-limited to 10/IP/hour). Care receivers enter the code in their Settings → Caregivers section; redemption uses a Firestore transaction (`runTransaction`) to atomically link the caregiver to `permittedCaregivers` and mark the invite as redeemed (single-use). Service: `artifacts/mobile/services/invites.ts`.
 
+#### Required Firestore Security Rules
+The `invites` collection is new and needs explicit rules. Add this block alongside the existing `users` rules in the Firebase Console (Firestore → Rules):
+
+```
+match /invites/{code} {
+  // Anyone signed in can look up an invite by its code (needed for redeem)
+  allow read: if request.auth != null;
+
+  // Only the caregiver themselves can create their invite
+  allow create: if request.auth != null
+    && request.resource.data.caregiverId == request.auth.uid
+    && request.resource.data.redeemedBy == null;
+
+  // Updates allowed only to mark redeemed (by the redeemer themselves)
+  allow update: if request.auth != null
+    && resource.data.redeemedBy == null
+    && request.resource.data.redeemedBy == request.auth.uid
+    && request.resource.data.caregiverId == resource.data.caregiverId;
+}
+```
+
 ### Key Files
 ```
 artifacts/mobile/

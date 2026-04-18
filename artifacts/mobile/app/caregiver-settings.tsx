@@ -84,8 +84,9 @@ export default function CaregiverSettingsScreen() {
       });
       setInviteCode(result.code);
       setInviteExpiresAt(result.expiresAt);
-    } catch {
-      Alert.alert("Error", "Could not generate an invite code. Please try again.");
+    } catch (err) {
+      const msg = (err as Error)?.message ?? "Could not generate an invite code.";
+      Alert.alert("Could Not Generate Code", msg);
     } finally {
       setInviteGenerating(false);
     }

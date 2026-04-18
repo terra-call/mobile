@@ -61,8 +61,18 @@ export async function createInvite(caregiver: {
       redeemedBy: null,
       redeemedAt: null,
     };
-    await setDoc(ref, invite);
-    return { code, expiresAt: invite.expiresAt };
+    try {
+      await setDoc(ref, invite);
+      return { code, expiresAt: invite.expiresAt };
+    } catch (err) {
+      const errCode = (err as { code?: string })?.code ?? "";
+      const errMsg = (err as Error)?.message ?? String(err);
+      console.error("[createInvite] Firestore write failed", { code: errCode, message: errMsg });
+      if (errCode === "permission-denied") {
+        throw new Error("Firestore rules do not allow writing to /invites. Update your Firestore security rules — see replit.md.");
+      }
+      throw err;
+    }
   }
   throw new Error("Could not generate a unique invite code");
 }
