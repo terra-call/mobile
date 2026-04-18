@@ -53,7 +53,7 @@ export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
-  const bottomPad = Platform.OS === "web" ? 34 : insets.bottom;
+  const bottomPad = Platform.OS === "web" ? 60 : insets.bottom + 24;
 
   // Profile fields
   const [name, setName] = useState(user?.name ?? "");
@@ -346,7 +346,11 @@ export default function SettingsScreen() {
   // ─────────────────────────────────────────────────────────────────────────
   return (
     <KeyboardAvoidingView
-      style={[styles.root, { backgroundColor: colors.background }]}
+      style={[
+        styles.root,
+        { backgroundColor: colors.background },
+        Platform.OS === "web" ? ({ height: "100dvh" } as object) : null,
+      ]}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
     >
       <ScrollView
