@@ -22,9 +22,21 @@ export async function sendSms(to: string, body: string): Promise<boolean> {
     return false;
   }
 
-  // Normalise the phone number — require E.164 format
-  const normalised = to.startsWith("+") ? to : `+${to.replace(/\D/g, "")}`;
-  if (normalised.length < 8) {
+  // Normalise to E.164. We assume US (+1) when no country code is given —
+  // 10 digits → prepend +1; 11 digits starting with 1 → prepend +;
+  // already-prefixed (+...) is passed through.
+  const digits = to.replace(/\D/g, "");
+  let normalised: string;
+  if (to.trim().startsWith("+")) {
+    normalised = `+${digits}`;
+  } else if (digits.length === 10) {
+    normalised = `+1${digits}`;
+  } else if (digits.length === 11 && digits.startsWith("1")) {
+    normalised = `+${digits}`;
+  } else {
+    normalised = `+${digits}`;
+  }
+  if (digits.length < 8) {
     logger.warn({ to }, "SMS skipped: phone number too short or malformed");
     return false;
   }
