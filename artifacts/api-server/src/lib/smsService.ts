@@ -41,10 +41,16 @@ export async function sendSms(to: string, body: string): Promise<boolean> {
     return false;
   }
 
+  // A2P 10DLC compliance: every outgoing message must include opt-out language.
+  // Append "Reply STOP to opt out." unless it's already present (idempotent).
+  const compliantBody = /reply\s+stop/i.test(body)
+    ? body
+    : `${body.replace(/\s+$/, "")} Reply STOP to opt out.`;
+
   try {
     const client = getClient()!;
     const message = await client.messages.create({
-      body,
+      body: compliantBody,
       from: fromNumber!,
       to: normalised,
     });
