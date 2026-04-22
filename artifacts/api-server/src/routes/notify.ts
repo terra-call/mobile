@@ -4,6 +4,7 @@ import {
   recordCheckIn,
   getSchedule,
   sendDirectSms,
+  sendEmergencyAlert,
 } from "../lib/notificationScheduler";
 import { sendSmsToMany, isSmsConfigured } from "../lib/smsService";
 
@@ -71,6 +72,27 @@ router.post("/notify/sms", async (req, res) => {
 
   await sendDirectSms(validPhones, receiverName, status, minutesSinceDue ?? 0);
   res.json({ sent: validPhones.length });
+});
+
+// ── Manual emergency: push + SMS atomically, suppresses missed alerts ────────
+router.post("/notify/emergency", async (req, res) => {
+  const { userId, receiverName, caregiverTokens, caregiverPhones } = req.body as {
+    userId: string;
+    receiverName: string;
+    caregiverTokens?: string[];
+    caregiverPhones?: string[];
+  };
+
+  if (!userId || !receiverName) {
+    res.status(400).json({ error: "userId and receiverName are required" });
+    return;
+  }
+
+  const tokens = (caregiverTokens ?? []).filter(Boolean);
+  const phones = (caregiverPhones ?? []).filter((p) => p && p.trim().length >= 7);
+
+  const result = await sendEmergencyAlert(userId, receiverName, tokens, phones);
+  res.json({ ok: true, ...result });
 });
 
 // ── Register or update a care receiver's check-in schedule ───────────────────

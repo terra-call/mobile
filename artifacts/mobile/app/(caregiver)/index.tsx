@@ -13,11 +13,13 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { NotificationPermissionPrompt } from "@/components/NotificationPermissionPrompt";
 import { StatusCard } from "@/components/StatusCard";
 import { useAuth } from "@/contexts/AuthContext";
 import type { CareReceiver } from "@/contexts/CareDataContext";
 import { useCareData } from "@/contexts/CareDataContext";
 import { useColors } from "@/hooks/useColors";
+import { registerForPushNotifications } from "@/services/notifications";
 
 type FilterType = "all" | "safe" | "issues";
 
@@ -64,6 +66,12 @@ export default function CaregiverDashboard() {
   };
 
   return (
+    <>
+      <NotificationPermissionPrompt
+        onGranted={() => {
+          if (user?.id) registerForPushNotifications(user.id);
+        }}
+      />
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={[styles.header, { paddingTop: topPadding + 16 }]}>
         <View style={styles.headerLeft}>
@@ -186,6 +194,7 @@ export default function CaregiverDashboard() {
         }
       />
     </View>
+    </>
   );
 }
 

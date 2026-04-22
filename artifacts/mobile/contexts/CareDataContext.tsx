@@ -292,30 +292,49 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
   }, [user]);
 
   // I'M NOT OK — manually triggered emergency by care receiver
-  // Bypasses check-in timer entirely — immediate alert to caregiver
+  // Bypasses check-in timer entirely — immediate alert to caregiver.
+  // Routes everything through the API server so that:
+  //   1. Push + SMS go out atomically (single source of truth)
+  //   2. The server suppresses any pending "missed check-in" alerts that
+  //      would otherwise fire moments later and clobber the EMERGENCY notice
+  //   3. We have a server-side log of what was actually delivered
   const triggerEmergency = useCallback(async () => {
     if (!user) return;
     const receiverName = user.name ?? "Care Receiver";
 
+    // Mark status in Firestore so caregiver dashboards update in real time
     if (isFirebaseConfigured && db) {
       await updateDoc(doc(db, "users", user.id), { status: "emergency" });
     }
+
+    // Suppress local notification flags so we don't fire a missed alert too
+    notifiedRef.current = { missed: true, emergency: true };
 
     const contacts = await getCaregiverContacts(permittedCaregiversRef.current);
     const cgTokens = contacts.map((c) => c.pushToken).filter(Boolean) as string[];
     const cgPhones = contacts.map((c) => c.phone).filter(Boolean) as string[];
 
-    if (cgTokens.length > 0) {
-      await sendExpoPushNotification(
-        cgTokens,
-        `🚨 EMERGENCY — ${receiverName}`,
-        `${receiverName} has indicated they need help immediately.`,
-        { type: "manual_emergency", userId: user.id }
-      );
-    }
+    // Single atomic call to the server — handles push, SMS, and missed-alert suppression
+    const ok = await callNotifyApi("/notify/emergency", {
+      userId: user.id,
+      receiverName,
+      caregiverTokens: cgTokens,
+      caregiverPhones: cgPhones,
+    });
 
-    if (cgPhones.length > 0) {
-      await triggerSmsAlert(cgPhones, receiverName, "manual_emergency", 0);
+    // Fallback: if the server is unreachable, send directly from device
+    if (!ok) {
+      if (cgTokens.length > 0) {
+        await sendExpoPushNotification(
+          cgTokens,
+          `🚨 EMERGENCY — ${receiverName}`,
+          `${receiverName} has indicated they need help immediately.`,
+          { type: "manual_emergency", userId: user.id }
+        );
+      }
+      if (cgPhones.length > 0) {
+        await triggerSmsAlert(cgPhones, receiverName, "manual_emergency", 0);
+      }
     }
   }, [user]);
 

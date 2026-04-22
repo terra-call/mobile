@@ -65,6 +65,23 @@ export function registerSchedule(
   );
 }
 
+// Mark an active manual emergency for this user. Suppresses any pending
+// missed/escalation alerts so the scheduler doesn't fire a "Missed Check-In"
+// notification on top of the manual emergency the receiver just triggered.
+export function markEmergency(userId: string): void {
+  const entry = schedules.get(userId);
+  if (!entry) return;
+  const now = new Date().toISOString();
+  schedules.set(userId, {
+    ...entry,
+    missedNotifiedAt: now,
+    escalationNotifiedAt: now,
+    smsMissedSentAt: now,
+    smsEscalationSentAt: now,
+    updatedAt: now,
+  });
+}
+
 export function recordCheckIn(userId: string, checkedInAt: string): void {
   const entry = schedules.get(userId);
   if (!entry) return;
@@ -83,6 +100,32 @@ export function recordCheckIn(userId: string, checkedInAt: string): void {
 
 export function getSchedule(userId: string): ScheduleEntry | undefined {
   return schedules.get(userId);
+}
+
+// ── Send an immediate emergency alert (push + SMS) atomically ─────────────────
+
+export async function sendEmergencyAlert(
+  userId: string,
+  receiverName: string,
+  caregiverTokens: string[],
+  caregiverPhones: string[]
+): Promise<{ pushSent: number; smsSent: number }> {
+  const title = `🚨 EMERGENCY — ${receiverName}`;
+  const body = `${receiverName} has indicated they need help immediately. This is a manual emergency alert — please respond now.`;
+
+  // Suppress any pending scheduler-driven missed/escalation alerts for this user
+  markEmergency(userId);
+
+  await sendPush(caregiverTokens, title, body, { type: "manual_emergency", userId });
+
+  if (isSmsConfigured() && caregiverPhones.length > 0) {
+    await sendDirectSms(caregiverPhones, receiverName, "manual_emergency", 0);
+  }
+
+  return {
+    pushSent: caregiverTokens.filter((t) => t?.startsWith("ExponentPushToken")).length,
+    smsSent: caregiverPhones.length,
+  };
 }
 
 // ── Send an immediate SMS alert (called from direct API route) ────────────────
