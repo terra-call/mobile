@@ -68,6 +68,7 @@ export default function CaregiverDashboard() {
   return (
     <>
       <NotificationPermissionPrompt
+        forceShow
         onGranted={() => {
           if (user?.id) registerForPushNotifications(user.id);
         }}

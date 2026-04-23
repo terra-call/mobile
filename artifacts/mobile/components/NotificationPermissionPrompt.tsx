@@ -19,9 +19,14 @@ import {
 
 interface Props {
   onGranted?: () => void;
+  // When true, ignore the "seen" flag and prompt status — show whenever
+  // the OS permission isn't currently granted. Used on the caregiver
+  // dashboard to ensure caregivers actually enable push notifications,
+  // since alerts to them are the whole point of the app.
+  forceShow?: boolean;
 }
 
-export function NotificationPermissionPrompt({ onGranted }: Props) {
+export function NotificationPermissionPrompt({ onGranted, forceShow = false }: Props) {
   const [visible, setVisible] = useState(false);
   const [requesting, setRequesting] = useState(false);
 
@@ -29,19 +34,24 @@ export function NotificationPermissionPrompt({ onGranted }: Props) {
     if (Platform.OS === "web") return;
     let cancelled = false;
     (async () => {
-      const seen = await AsyncStorage.getItem(STORAGE_KEYS.NOTIF_PROMPT_SEEN);
-      if (seen === "true" || cancelled) return;
       const status = await getNotificationPermissionStatus();
       if (cancelled) return;
-      // Only show pre-prompt when the OS hasn't been asked yet.
-      if (status === "undetermined") {
-        setVisible(true);
+
+      if (forceShow) {
+        // Show whenever permission isn't already granted.
+        if (status !== "granted") setVisible(true);
+        return;
       }
+
+      const seen = await AsyncStorage.getItem(STORAGE_KEYS.NOTIF_PROMPT_SEEN);
+      if (seen === "true") return;
+      // Only show pre-prompt when the OS hasn't been asked yet.
+      if (status === "undetermined") setVisible(true);
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [forceShow]);
 
   const markSeen = async () => {
     try {

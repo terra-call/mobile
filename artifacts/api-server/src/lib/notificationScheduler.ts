@@ -116,6 +116,18 @@ export async function sendEmergencyAlert(
   // Suppress any pending scheduler-driven missed/escalation alerts for this user
   markEmergency(userId);
 
+  const validTokens = caregiverTokens.filter((t) => t?.startsWith("ExponentPushToken"));
+  logger.info(
+    {
+      userId,
+      receiverName,
+      tokensReceived: caregiverTokens.length,
+      tokensValid: validTokens.length,
+      phonesReceived: caregiverPhones.length,
+    },
+    "Manual emergency alert"
+  );
+
   await sendPush(caregiverTokens, title, body, { type: "manual_emergency", userId });
 
   if (isSmsConfigured() && caregiverPhones.length > 0) {
@@ -123,7 +135,7 @@ export async function sendEmergencyAlert(
   }
 
   return {
-    pushSent: caregiverTokens.filter((t) => t?.startsWith("ExponentPushToken")).length,
+    pushSent: validTokens.length,
     smsSent: caregiverPhones.length,
   };
 }
