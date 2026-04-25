@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { build as esbuild } from "esbuild";
 import esbuildPluginPino from "esbuild-plugin-pino";
-import { rm } from "node:fs/promises";
+import { cp, rm, stat } from "node:fs/promises";
 
 // Plugins (e.g. 'esbuild-plugin-pino') may use `require` to resolve dependencies
 globalThis.require = createRequire(import.meta.url);
@@ -13,6 +13,20 @@ const artifactDir = path.dirname(fileURLToPath(import.meta.url));
 async function buildAll() {
   const distDir = path.resolve(artifactDir, "dist");
   await rm(distDir, { recursive: true, force: true });
+
+  // Copy static assets (public/ holds the legal HTML pages required by Twilio A2P)
+  // into dist/ so they ship with the production deployment bundle.
+  const publicSrc = path.resolve(artifactDir, "public");
+  const publicDest = path.resolve(distDir, "public");
+  try {
+    const s = await stat(publicSrc);
+    if (s.isDirectory()) {
+      await cp(publicSrc, publicDest, { recursive: true });
+      console.log(`[build] copied public/ → dist/public/`);
+    }
+  } catch {
+    // public/ doesn't exist — fine, nothing to copy
+  }
 
   await esbuild({
     entryPoints: [path.resolve(artifactDir, "src/index.ts")],
