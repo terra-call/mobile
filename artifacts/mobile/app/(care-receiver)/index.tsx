@@ -16,7 +16,8 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { collection, getDocs, query, where } from "firebase/firestore";
+import { collection, doc, getDoc, getDocs, query, where } from "firebase/firestore";
+import { CameraConsentModal } from "@/components/CameraConsentModal";
 import { CheckInButton } from "@/components/CheckInButton";
 import { NotificationPermissionPrompt } from "@/components/NotificationPermissionPrompt";
 import { useAuth } from "@/contexts/AuthContext";
@@ -186,6 +187,9 @@ export default function CareReceiverHome() {
   const confirmOpacity = useRef(new Animated.Value(0)).current;
   const [emergencySending, setEmergencySending] = useState(false);
 
+  // TWILIO VIDEO — Phase 2 camera integration: one-time consent prompt
+  const [consentNeeded, setConsentNeeded] = useState(false);
+
   const topPadding = Platform.OS === "web" ? 67 : insets.top;
   const bottomPadding = Platform.OS === "web" ? 34 : insets.bottom;
 
@@ -203,6 +207,26 @@ export default function CareReceiverHome() {
       })
       .catch(() => {});
   }, []);
+
+  // TWILIO VIDEO — Phase 2 camera integration
+  // Check if the care-receiver has answered the camera-consent prompt yet.
+  // Shows the modal once if cameraConsent is missing on their user doc.
+  // If the doc itself is missing (edge case: user created via auth but never
+  // had a profile written), still show the modal — answering it will create
+  // the field via setDoc(merge:true).
+  useEffect(() => {
+    if (!user || !isFirebaseConfigured || !db) return;
+    getDoc(doc(db, "users", user.id))
+      .then((snap) => {
+        if (!snap.exists()) {
+          setConsentNeeded(true);
+          return;
+        }
+        const v = snap.data().cameraConsent;
+        if (v === undefined || v === null) setConsentNeeded(true);
+      })
+      .catch(() => {});
+  }, [user]);
 
   const handleCheckIn = async () => {
     try {
@@ -273,6 +297,14 @@ export default function CareReceiverHome() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
+      {user && (
+        <CameraConsentModal
+          visible={consentNeeded}
+          userId={user.id}
+          onAnswered={() => setConsentNeeded(false)}
+        />
+      )}
+
       <EmergencyModal
         visible={showEmergency}
         caregiverName={caregiverName}

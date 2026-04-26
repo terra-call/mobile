@@ -8,6 +8,7 @@ import {
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Stack, router, useSegments } from "expo-router";
+import * as Notifications from "expo-notifications";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect, useRef, useState } from "react";
 import { Platform, StyleSheet, Text, View } from "react-native";
@@ -67,6 +68,42 @@ function NotificationInitializer() {
     registeredRef.current = user.id;
     registerForPushNotifications(user.id);
   }, [user]);
+
+  return null;
+}
+
+// TWILIO VIDEO — Phase 2 camera integration
+// Listens for camera_activate push notifications. When the care-receiver's
+// device receives one (either while app is foregrounded, or when the user
+// taps the notification), navigate them into the camera-publish screen.
+function CameraActivationListener() {
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+
+    const handle = (notification: Notifications.Notification) => {
+      const data = notification.request?.content?.data as
+        | { type?: string; roomName?: string; caregiverName?: string }
+        | undefined;
+      if (data?.type !== "camera_activate" || !data.roomName) return;
+      router.push({
+        pathname: "/camera-stream",
+        params: {
+          mode: "publish",
+          roomName: data.roomName,
+          caregiverName: data.caregiverName ?? "Caregiver",
+        },
+      });
+    };
+
+    const recvSub = Notifications.addNotificationReceivedListener(handle);
+    const respSub = Notifications.addNotificationResponseReceivedListener((response) =>
+      handle(response.notification)
+    );
+    return () => {
+      recvSub.remove();
+      respSub.remove();
+    };
+  }, []);
 
   return null;
 }
@@ -134,6 +171,7 @@ function RootLayoutNav() {
     <>
       <NavigationGuard />
       <NotificationInitializer />
+      <CameraActivationListener />
       <Stack
         screenOptions={{
           headerShown: false,
@@ -151,6 +189,10 @@ function RootLayoutNav() {
         <Stack.Screen name="(tabs)" />
         <Stack.Screen
           name="emergency-call"
+          options={{ presentation: "fullScreenModal", animation: "fade" }}
+        />
+        <Stack.Screen
+          name="camera-stream"
           options={{ presentation: "fullScreenModal", animation: "fade" }}
         />
         <Stack.Screen

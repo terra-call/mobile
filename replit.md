@@ -178,3 +178,27 @@ service cloud.firestore {
 - API health endpoint: `GET /api/admin/health` returns Twilio SMS delivery rate over last 24h (phone numbers are masked to `***1234`)
 - Note: server-side missed-alert events fired by the api-server scheduler are NOT logged to Firestore — only device-side events are. This is an accepted MVP limitation.
 - Follow-up: add Firebase ID-token verification to `/api/admin/health` (currently public; only exposes aggregate counters)
+
+## Week 4 — Twilio Video Camera Activation (Phase A scaffolding)
+**Status:** Scaffolding done & verified end-to-end. Real Twilio Video SDK integration deferred to Phase B (requires API Key + EAS dev build).
+
+### What works today
+- **Server routes** (`artifacts/api-server/src/routes/video.ts`):
+  - `POST /api/video/initiate` — sends `camera_activate` push to receiver. Validates Expo token format. Returns 502 if Expo dispatch fails, 400 on bad input, 500 on internal error. Returns `{ ok, roomName, pushSent, videoConfigured }`.
+  - `POST /api/video/token` — returns 503 `video_not_configured` until `TWILIO_API_KEY_SID` + `TWILIO_API_KEY_SECRET` are set; then mints Twilio Video access tokens (stub today).
+  - Mounted via `router.use(videoRouter)` in `routes/index.ts` (the app already prefixes everything with `/api`).
+  - `sendPush()` in `lib/notificationScheduler.ts` now returns `{ validTokens, delivered }` so callers can detect dispatch failure.
+- **Mobile**:
+  - `services/video.ts` — `getCameraConsent`, `getReceiverPushToken`, `buildVideoRoomName`, `initiateCameraActivation` helpers.
+  - `components/CameraConsentModal.tsx` — full-screen modal; writes `cameraConsent: bool` to `users/{uid}` via `setDoc(merge:true)`.
+  - `app/(care-receiver)/index.tsx` — shows consent modal once if `cameraConsent` is missing OR the user doc doesn't exist.
+  - `app/emergency-call.tsx` — 15-second unanswered-call timer with Cancel button. Timer only starts AFTER `Linking.openURL` succeeds, so a failed dial cannot silently trigger camera activation. On expiry: checks consent + push token, calls `/api/video/initiate`, navigates to `camera-stream?mode=view`.
+  - `app/camera-stream.tsx` — placeholder UI (`mode=publish` for receiver, `mode=view` for caregiver) with End Stream button + active red banner. All Twilio Video native SDK calls marked `// TWILIO VIDEO — Phase 2 camera integration`.
+  - `app/_layout.tsx` — registers `camera-stream` route + `CameraActivationListener` that handles `type=camera_activate` notifications and routes the receiver into `camera-stream?mode=publish`.
+
+### Deferred to Phase B (when user has Twilio Video API Key + Secret + EAS dev build)
+1. `pnpm add @twilio/video-react-native-sdk` and run `expo prebuild` → EAS dev build (Expo Go won't load the native module).
+2. Add `TWILIO_API_KEY_SID` and `TWILIO_API_KEY_SECRET` secrets, then implement Twilio access-token minting in `/api/video/token`.
+3. Replace placeholder UI in `camera-stream.tsx` with `<TwilioVideoLocalView>` (publish mode) and `<TwilioVideoParticipantView>` (view mode).
+4. **Server-side authorization on `/api/video/initiate`** — currently unauthenticated. Phase B must add: (a) Firebase ID-token verification of the caller, (b) Firestore lookup confirming the caller is a permitted caregiver of the receiver, (c) server-side re-check of the receiver's `cameraConsent` flag. Same hardening applies to `/api/admin/health`.
+5. Detect "call answered" so the 15s escalation timer can be cancelled automatically (today the caregiver must manually tap Cancel after returning to the app).

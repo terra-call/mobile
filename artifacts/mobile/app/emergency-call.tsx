@@ -1,9 +1,23 @@
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Alert, Animated, Linking, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useAuth } from "@/contexts/AuthContext";
+import {
+  buildVideoRoomName,
+  getCameraConsent,
+  getReceiverPushToken,
+  initiateCameraActivation,
+  type CameraConsent,
+} from "@/services/video";
+
+// TWILIO VIDEO — Phase 2 camera integration
+// If the caregiver presses "Call Their Device" and there is no answer within
+// this many milliseconds, the app checks the receiver's stored consent and,
+// if granted, asks the server to activate the receiver's front camera.
+const UNANSWERED_THRESHOLD_MS = 15_000;
 
 export default function EmergencyCallScreen() {
   const { receiverName, receiverId, receiverPhone } = useLocalSearchParams<{
@@ -12,11 +26,18 @@ export default function EmergencyCallScreen() {
     receiverPhone?: string;
   }>();
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
 
   const pulse1 = useRef(new Animated.Value(1)).current;
   const pulse2 = useRef(new Animated.Value(1)).current;
   const pulse3 = useRef(new Animated.Value(1)).current;
   const fadeIn = useRef(new Animated.Value(0)).current;
+
+  // TWILIO VIDEO — Phase 2 camera integration
+  const [callState, setCallState] = useState<"idle" | "calling" | "activating" | "no_consent">("idle");
+  const [secondsRemaining, setSecondsRemaining] = useState(15);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const activationStartedRef = useRef(false);
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
   const bottomPad = Platform.OS === "web" ? 34 : insets.bottom;
@@ -44,6 +65,7 @@ export default function EmergencyCallScreen() {
 
     return () => {
       p1.stop(); p2.stop(); p3.stop();
+      if (timerRef.current) clearInterval(timerRef.current);
     };
   }, []);
 
@@ -58,10 +80,105 @@ export default function EmergencyCallScreen() {
     }
   };
 
-  // TEMPORARY — Replace with Twilio Voice VoIP call in Week 4-5 build
-  // This currently opens the native dialer as a placeholder
+  // TWILIO VIDEO — Phase 2 camera integration
+  // After the caregiver dials the receiver's device, start a 15-second
+  // unanswered-call timer. When it expires, check the receiver's consent and
+  // either activate the camera or surface a "no consent" state.
+  const startUnansweredTimer = () => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    setCallState("calling");
+    setSecondsRemaining(15);
+
+    let elapsed = 0;
+    timerRef.current = setInterval(() => {
+      elapsed += 1;
+      const remaining = Math.max(0, 15 - elapsed);
+      setSecondsRemaining(remaining);
+
+      if (elapsed >= UNANSWERED_THRESHOLD_MS / 1000) {
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+        }
+        if (!activationStartedRef.current) {
+          activationStartedRef.current = true;
+          attemptCameraActivation();
+        }
+      }
+    }, 1000);
+  };
+
+  // TWILIO VIDEO — Phase 2 camera integration
+  // 15 seconds elapsed without an answer — read the receiver's stored consent
+  // and either notify them to activate their camera, or show "not consented".
+  const attemptCameraActivation = async () => {
+    setCallState("activating");
+
+    if (!receiverId) {
+      Alert.alert("Cannot activate camera", "Receiver information is missing.");
+      setCallState("idle");
+      return;
+    }
+
+    const [consent, pushToken]: [CameraConsent, string | null] = await Promise.all([
+      getCameraConsent(receiverId),
+      getReceiverPushToken(receiverId),
+    ]);
+
+    if (consent !== "granted") {
+      setCallState("no_consent");
+      return;
+    }
+
+    if (!pushToken) {
+      Alert.alert(
+        "Cannot reach device",
+        `${receiverName ?? "The care receiver"} has consented to camera activation, but their device hasn't registered for push notifications yet. Ask them to open the app and enable notifications.`
+      );
+      setCallState("idle");
+      return;
+    }
+
+    const roomName = buildVideoRoomName(receiverId);
+    const result = await initiateCameraActivation({
+      receiverPushToken: pushToken,
+      receiverName: receiverName ?? "Care receiver",
+      caregiverName: user?.name ?? "Caregiver",
+      roomName,
+    });
+
+    if (!result.ok) {
+      Alert.alert(
+        "Camera activation failed",
+        result.error ??
+          "We couldn't reach the camera-activation service. Try again or call 911 if this is an emergency."
+      );
+      setCallState("idle");
+      activationStartedRef.current = false;
+      return;
+    }
+
+    // Push has been sent to the receiver's device; navigate the caregiver
+    // into the live-stream viewer screen joining the same Twilio Video room.
+    router.replace({
+      pathname: "/camera-stream",
+      params: {
+        mode: "view",
+        roomName,
+        receiverName: receiverName ?? "Care receiver",
+      },
+    });
+  };
+
+  // TWILIO VIDEO — Phase 2 camera integration
+  // Wraps the existing tel: dialer call so we can also start the unanswered
+  // timer in parallel. Native dialer takes over the screen, so when the
+  // caregiver returns to this screen the timer may have already elapsed.
+  // The timer is only started AFTER the dialer successfully opens, so a
+  // failed dial does not silently trigger a camera activation.
   const callDevice = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+
     if (!receiverPhone || !receiverPhone.trim()) {
       Alert.alert(
         "No Phone Number",
@@ -69,14 +186,36 @@ export default function EmergencyCallScreen() {
       );
       return;
     }
+
     const digits = receiverPhone.replace(/\D/g, "");
     const url = `tel:${digits}`;
     const canOpen = await Linking.canOpenURL(url).catch(() => false);
-    if (canOpen) {
-      Linking.openURL(url);
-    } else {
+
+    if (!canOpen) {
       Alert.alert("Call Device", `Please dial ${receiverPhone} manually.`);
+      return;
     }
+
+    try {
+      await Linking.openURL(url);
+    } catch {
+      Alert.alert("Call Device", `Could not open dialer. Please dial ${receiverPhone} manually.`);
+      return;
+    }
+
+    // Dialer opened successfully — only NOW start the 15s unanswered timer.
+    activationStartedRef.current = false;
+    startUnansweredTimer();
+  };
+
+  const cancelTimer = () => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    activationStartedRef.current = false;
+    setCallState("idle");
+    setSecondsRemaining(15);
   };
 
   return (
@@ -110,6 +249,33 @@ export default function EmergencyCallScreen() {
           </View>
           <Text style={styles.receiverName}>{receiverName ?? "Care Receiver"}</Text>
           <Text style={styles.receiverStatus}>Requires immediate assistance</Text>
+
+          {/* TWILIO VIDEO — Phase 2 camera integration: state banners */}
+          {callState === "calling" && (
+            <View style={styles.timerBanner}>
+              <Feather name="phone-call" size={14} color="#22FF6E" />
+              <Text style={styles.timerText}>
+                Calling — activating camera in {secondsRemaining}s if no answer
+              </Text>
+              <Pressable onPress={cancelTimer} hitSlop={8}>
+                <Text style={styles.timerCancel}>Cancel</Text>
+              </Pressable>
+            </View>
+          )}
+          {callState === "activating" && (
+            <View style={styles.timerBanner}>
+              <Feather name="video" size={14} color="#22FF6E" />
+              <Text style={styles.timerText}>Activating front camera…</Text>
+            </View>
+          )}
+          {callState === "no_consent" && (
+            <View style={styles.noConsentBanner}>
+              <Feather name="x-circle" size={14} color="#FFB347" />
+              <Text style={styles.noConsentText}>
+                {receiverName ?? "This care receiver"} has not consented to camera activation
+              </Text>
+            </View>
+          )}
         </View>
 
         <View style={styles.actions}>
@@ -118,9 +284,15 @@ export default function EmergencyCallScreen() {
             <Text style={styles.call911Text}>CALL 911</Text>
           </Pressable>
 
-          <Pressable style={styles.callDevice} onPress={callDevice}>
+          <Pressable
+            style={[styles.callDevice, callState === "calling" && styles.callDeviceActive]}
+            onPress={callDevice}
+            disabled={callState === "calling" || callState === "activating"}
+          >
             <Feather name="smartphone" size={20} color="#FF3B30" />
-            <Text style={styles.callDeviceText}>Call Their Device</Text>
+            <Text style={styles.callDeviceText}>
+              {callState === "calling" ? "Calling…" : "Call Their Device"}
+            </Text>
           </Pressable>
 
           <Pressable style={styles.dismiss} onPress={() => router.back()}>
@@ -179,6 +351,49 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
   receiverStatus: { fontSize: 16, color: "#FF3B30", textAlign: "center" },
+  timerBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: "rgba(34, 255, 110, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(34, 255, 110, 0.35)",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+    marginTop: 6,
+  },
+  timerText: {
+    flex: 1,
+    color: "rgba(255,255,255,0.85)",
+    fontSize: 12,
+    fontWeight: "500",
+  },
+  timerCancel: {
+    color: "#22FF6E",
+    fontSize: 12,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  noConsentBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: "rgba(255, 179, 71, 0.08)",
+    borderWidth: 1,
+    borderColor: "rgba(255, 179, 71, 0.35)",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+    marginTop: 6,
+  },
+  noConsentText: {
+    flex: 1,
+    color: "#FFB347",
+    fontSize: 12,
+    fontWeight: "500",
+  },
   actions: { gap: 14 },
   call911: {
     backgroundColor: "#FF3B30",
@@ -206,6 +421,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 12,
   },
+  callDeviceActive: { opacity: 0.55 },
   callDeviceText: { fontSize: 16, fontWeight: "600", color: "#FF3B30" },
   dismiss: { alignItems: "center", paddingVertical: 16 },
   dismissText: { color: "rgba(255, 255, 255, 0.35)", fontSize: 15 },

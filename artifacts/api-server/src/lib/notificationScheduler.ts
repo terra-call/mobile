@@ -162,14 +162,14 @@ export async function sendDirectSms(
 
 // ── Expo Push API sender ──────────────────────────────────────────────────────
 
-async function sendPush(
+export async function sendPush(
   tokens: string[],
   title: string,
   body: string,
   data?: Record<string, string>
-): Promise<void> {
+): Promise<{ validTokens: number; delivered: boolean }> {
   const valid = tokens.filter((t) => t?.startsWith("ExponentPushToken"));
-  if (valid.length === 0) return;
+  if (valid.length === 0) return { validTokens: 0, delivered: false };
 
   const messages = valid.map((to) => ({ to, title, body, data: data ?? {}, sound: "default" }));
   try {
@@ -178,9 +178,14 @@ async function sendPush(
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify(messages),
     });
-    if (!res.ok) logger.warn({ status: res.status }, "Expo Push API returned non-OK");
+    if (!res.ok) {
+      logger.warn({ status: res.status }, "Expo Push API returned non-OK");
+      return { validTokens: valid.length, delivered: false };
+    }
+    return { validTokens: valid.length, delivered: true };
   } catch (err) {
     logger.error({ err }, "Failed to reach Expo Push API");
+    return { validTokens: valid.length, delivered: false };
   }
 }
 
