@@ -17,6 +17,7 @@ import {
   triggerSmsAlert,
   callNotifyApi,
 } from "@/services/notifications";
+import { logEvent } from "@/services/events";
 import { useAuth } from "./AuthContext";
 
 export type ReceiverStatus = "checked-in" | "missed" | "emergency" | "unknown";
@@ -241,6 +242,8 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
         if (cgPhones.length > 0) {
           await triggerSmsAlert(cgPhones, receiverName, "emergency", diffMin);
         }
+        // Log event for the admin dashboard
+        logEvent(user.id, receiverName, "emergency").catch(() => {});
       } else if (diffMin >= missed && !notifiedRef.current.missed) {
         notifiedRef.current.missed = true;
         // Push notification
@@ -256,6 +259,8 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
         if (cgPhones.length > 0) {
           await triggerSmsAlert(cgPhones, receiverName, "missed", diffMin);
         }
+        // Log event for the admin dashboard
+        logEvent(user.id, receiverName, "missed").catch(() => {});
       }
     };
 
@@ -289,6 +294,9 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
 
     // Notify API server scheduler so it resets its counters too
     callNotifyApi("/notify/checkin", { userId: user.id, checkedInAt: now }).catch(() => {});
+
+    // Log event for the admin dashboard
+    logEvent(user.id, user.name ?? "Care Receiver", "checkin").catch(() => {});
   }, [user]);
 
   // I'M NOT OK — manually triggered emergency by care receiver
@@ -309,6 +317,9 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
 
     // Suppress local notification flags so we don't fire a missed alert too
     notifiedRef.current = { missed: true, emergency: true };
+
+    // Log event for the admin dashboard
+    logEvent(user.id, receiverName, "manual_emergency").catch(() => {});
 
     const contacts = await getCaregiverContacts(permittedCaregiversRef.current);
     const cgTokens = contacts.map((c) => c.pushToken).filter(Boolean) as string[];

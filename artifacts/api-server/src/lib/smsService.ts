@@ -12,6 +12,15 @@ function getClient(): twilio.Twilio | null {
   return twilio(accountSid, authToken);
 }
 
+// Public accessor used by admin metrics endpoint to query message status.
+export function getTwilioClient(): twilio.Twilio | null {
+  return getClient();
+}
+
+export function getTwilioFromNumber(): string | undefined {
+  return fromNumber;
+}
+
 export function isSmsConfigured(): boolean {
   return !!(accountSid && authToken && fromNumber);
 }

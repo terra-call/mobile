@@ -144,10 +144,37 @@ expoPushToken: string (Expo push token, set on login)
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    function isAdmin() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin";
+    }
+
     match /users/{userId} {
+      // Caregivers need to read other users to find their care receivers
       allow read: if request.auth != null;
-      allow write: if request.auth != null && request.auth.uid == userId;
+      allow write: if request.auth != null && (request.auth.uid == userId || isAdmin());
+    }
+
+    match /events/{eventId} {
+      // Any authenticated user can log their own events
+      allow create: if request.auth != null
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.type in ["checkin","missed","emergency","manual_emergency"];
+      // Only admin can read or list the event log
+      allow read, list: if isAdmin();
+      allow update, delete: if false;
     }
   }
 }
 ```
+
+## Week 4 — Admin Dashboard
+- Fourth user role: `"admin"` (defined in `artifacts/mobile/contexts/AuthContext.tsx`)
+- Auto-promotion: anyone logging in with email `mike@terra-call.com` is automatically given the admin role and routed to `/(admin)/`
+- Dashboard at `artifacts/mobile/app/(admin)/index.tsx` — 4 cards: User Metrics, Activity Metrics, System Health, Recent Activity
+- Event logging: `artifacts/mobile/services/events.ts` writes to top-level `events` collection on check-in / missed / emergency / manual_emergency
+- API health endpoint: `GET /api/admin/health` returns Twilio SMS delivery rate over last 24h (phone numbers are masked to `***1234`)
+- Note: server-side missed-alert events fired by the api-server scheduler are NOT logged to Firestore — only device-side events are. This is an accepted MVP limitation.
+- Follow-up: add Firebase ID-token verification to `/api/admin/health` (currently public; only exposes aggregate counters)

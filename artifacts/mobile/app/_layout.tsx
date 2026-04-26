@@ -100,13 +100,28 @@ function NavigationGuard() {
         router.replace("/login");
       }
     } else {
-      // Signed in — leave auth screens and go to the correct dashboard
+      // Signed in — leave auth screens and go to the correct dashboard.
+      // Also enforce role-route consistency so a non-admin can't deep-link
+      // into /(admin)/ and admins don't get stranded on caregiver screens.
+      const onAdminGroup = currentScreen === "(admin)";
+      const onCaregiverGroup = currentScreen === "(caregiver)";
+      const onReceiverGroup = currentScreen === "(care-receiver)";
+
       if (onAuthScreen || onIndexScreen) {
-        if (user.role === "care-receiver") {
+        if (user.role === "admin") {
+          router.replace("/(admin)/");
+        } else if (user.role === "care-receiver") {
           router.replace("/(care-receiver)/");
         } else {
           router.replace("/(caregiver)/");
         }
+      } else if (user.role !== "admin" && onAdminGroup) {
+        // Block non-admins from the admin group
+        if (user.role === "care-receiver") router.replace("/(care-receiver)/");
+        else router.replace("/(caregiver)/");
+      } else if (user.role === "admin" && (onCaregiverGroup || onReceiverGroup)) {
+        // Keep admin in the admin group if their role was promoted mid-session
+        router.replace("/(admin)/");
       }
     }
   }, [user, loading, segments, onboardingChecked, onboardingSeen]);
@@ -132,6 +147,7 @@ function RootLayoutNav() {
         <Stack.Screen name="register" />
         <Stack.Screen name="(care-receiver)" />
         <Stack.Screen name="(caregiver)" />
+        <Stack.Screen name="(admin)" />
         <Stack.Screen name="(tabs)" />
         <Stack.Screen
           name="emergency-call"

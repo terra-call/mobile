@@ -9,7 +9,15 @@ import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
 import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { auth, db, isFirebaseConfigured } from "@/services/firebase";
 
-export type UserRole = "care-receiver" | "caregiver" | "family";
+export type UserRole = "care-receiver" | "caregiver" | "family" | "admin";
+
+// Founder/admin email — automatically promoted to "admin" role on login.
+const ADMIN_EMAILS = new Set(["mike@terra-call.com"]);
+
+function resolveRole(email: string, currentRole: UserRole | undefined): UserRole {
+  if (ADMIN_EMAILS.has(email.toLowerCase())) return "admin";
+  return currentRole ?? "caregiver";
+}
 
 export interface User {
   id: string;
@@ -84,11 +92,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               const snap = await getDoc(doc(db, "users", firebaseUser.uid));
               if (snap.exists()) {
                 const data = snap.data();
+                const email = firebaseUser.email ?? "";
+                const role = resolveRole(email, data.role as UserRole);
+                // Persist role upgrade for admin emails so it's stable across sessions
+                if (role === "admin" && data.role !== "admin") {
+                  try { await setDoc(doc(db, "users", firebaseUser.uid), { role: "admin" }, { merge: true }); } catch { /* ignore */ }
+                }
                 const userData: User = {
                   id: firebaseUser.uid,
-                  email: firebaseUser.email ?? "",
+                  email,
                   name: data.name ?? "",
-                  role: (data.role as UserRole) ?? "caregiver",
+                  role,
                   phone: data.phone ?? undefined,
                 };
                 await writeProfileCache(firebaseUser.uid, userData);
@@ -140,11 +154,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const snap = await getDoc(doc(db, "users", firebaseUser.uid));
           if (snap.exists()) {
             const data = snap.data();
+            const userEmail = firebaseUser.email ?? "";
+            const role = resolveRole(userEmail, data.role as UserRole);
+            if (role === "admin" && data.role !== "admin") {
+              try { await setDoc(doc(db, "users", firebaseUser.uid), { role: "admin" }, { merge: true }); } catch { /* ignore */ }
+            }
             userData = {
               id: firebaseUser.uid,
-              email: firebaseUser.email ?? "",
+              email: userEmail,
               name: data.name ?? "",
-              role: (data.role as UserRole) ?? "caregiver",
+              role,
               phone: data.phone ?? undefined,
             };
             await writeProfileCache(firebaseUser.uid, userData);

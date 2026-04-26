@@ -6,7 +6,7 @@ import {
   sendDirectSms,
   sendEmergencyAlert,
 } from "../lib/notificationScheduler";
-import { sendSmsToMany, isSmsConfigured } from "../lib/smsService";
+import { sendSmsToMany, isSmsConfigured, getTwilioClient, getTwilioFromNumber } from "../lib/smsService";
 
 const router = Router();
 
@@ -72,6 +72,53 @@ router.post("/notify/sms", async (req, res) => {
 
   await sendDirectSms(validPhones, receiverName, status, minutesSinceDue ?? 0);
   res.json({ sent: validPhones.length });
+});
+
+// ── Admin: system health (Twilio delivery rate over last 24h) ────────────────
+// Note: this endpoint is currently unauthenticated and only exposes aggregate
+// SMS delivery counters (no phone numbers, no message bodies). Adding proper
+// Firebase ID-token verification is tracked as a follow-up.
+function maskPhone(phone: string | null | undefined): string {
+  if (!phone) return "unknown";
+  const digits = phone.replace(/\D/g, "");
+  if (digits.length < 4) return "***";
+  return `***${digits.slice(-4)}`;
+}
+
+router.get("/admin/health", async (_req, res) => {
+  const out: {
+    twilio: { configured: boolean; sent: number; delivered: number; rate: number | null };
+    recentErrors: string[];
+  } = {
+    twilio: { configured: isSmsConfigured(), sent: 0, delivered: 0, rate: null },
+    recentErrors: [],
+  };
+
+  const client = getTwilioClient();
+  const from = getTwilioFromNumber();
+  if (client && from) {
+    try {
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const messages = await client.messages.list({ from, dateSentAfter: since, limit: 100 });
+      out.twilio.sent = messages.length;
+      out.twilio.delivered = messages.filter(
+        (m) => m.status === "delivered" || m.status === "received"
+      ).length;
+      out.twilio.rate = messages.length > 0 ? out.twilio.delivered / messages.length : null;
+
+      for (const m of messages) {
+        if (m.status === "failed" || m.status === "undelivered") {
+          // Mask phone numbers — only the last four digits are exposed.
+          out.recentErrors.push(`SMS to ${maskPhone(m.to)}: ${m.errorMessage ?? m.status}`);
+        }
+      }
+      out.recentErrors = out.recentErrors.slice(0, 5);
+    } catch (err) {
+      out.recentErrors.push(`Twilio API error: ${(err as Error).message}`);
+    }
+  }
+
+  res.json(out);
 });
 
 // ── Manual emergency: push + SMS atomically, suppresses missed alerts ────────
