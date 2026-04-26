@@ -1,0 +1,85 @@
+We are starting Week 4 of the Terra Call build. There are two major 
+deliverables this week:
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DELIVERABLE 1 — FOUNDER/ADMIN DASHBOARD
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Add a fourth user role called "Admin" that gives the app founder 
+(Mike Jones) a private dashboard to monitor the business.
+
+ADMIN LOGIN:
+- Admin logs in with a special admin email flagged in Firestore
+- Admin role routes to the Admin Dashboard — not the caregiver 
+  or care receiver screens
+
+ADMIN DASHBOARD SECTIONS:
+
+1. USER METRICS
+   - Total registered users
+   - Care Receivers vs Caregivers count
+   - New signups this week vs last week
+   - Active users (checked in within last 7 days) vs inactive
+
+2. ACTIVITY METRICS
+   - Total check-ins recorded (all time)
+   - Total alerts fired (missed check-ins)
+   - Total emergency alerts fired
+   - Total I'M NOT OK alerts fired
+   - Average caregiver response time to alerts
+
+3. SYSTEM HEALTH
+   - API server status (running/down)
+   - Twilio SMS delivery rate (sent vs delivered)
+   - Firebase connection status
+   - Any recent errors or failed alerts
+
+4. TOP ACTIVITY FEED
+   - Last 10 events across all users
+   - Shows: timestamp, event type, user name
+   - Event types: Check-in, Missed Alert, Emergency, I'M NOT OK
+
+DESIGN:
+- Clean dark navy header matching the app's color scheme
+- Teal (#0097A7) accent color for metrics
+- Card-based layout — one card per section
+- Numbers should be large and easy to read at a glance
+- Mobile-friendly
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DELIVERABLE 2 — TWILIO VIDEO (PHONE CAMERA)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+When a caregiver taps "Call Their Device" and the call goes 
+unanswered, the care receiver's phone camera should automatically 
+activate and stream live video to the caregiver using Twilio Video.
+
+CONSENT SCREEN:
+- Add a consent step during Care Receiver registration
+- Screen says: "In an emergency, if you don't answer a call from 
+  your caregiver, your phone camera may be activated so they can 
+  check on you. Do you consent to this?"
+- Two buttons: "I Consent" and "I Do Not Consent"
+- Store consent status in Firebase on the user's profile
+- If care receiver has not consented, camera activation is disabled
+
+EMERGENCY CAMERA FLOW:
+- Caregiver taps "Call Their Device" on emergency screen
+- If call is unanswered after 15 seconds:
+  - Check Firebase for care receiver's camera consent
+  - If consented: initiate Twilio Video session
+  - Care receiver's front camera activates automatically
+  - Video streams to caregiver's screen
+  - Caregiver sees live feed with "End Stream" button
+- If not consented: show message "Care receiver has not consented 
+  to camera activation"
+
+IMPORTANT CODE COMMENTS:
+Add this comment wherever the camera activation logic lives:
+// TWILIO VIDEO — Phase 2 camera integration
+// Care receiver must have consented at registration
+// Auto-activates after unanswered emergency call (15 sec timeout)
+// Wyze home camera integration added in Week 5-6
+
+Build these one at a time. Start with the Admin Dashboard first, 
+confirm it's working, then move to Twilio Video.
