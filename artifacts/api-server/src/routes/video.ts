@@ -20,10 +20,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { Router, type IRouter, type Request, type Response } from "express";
+import twilio from "twilio";
 import { logger } from "../lib/logger";
 import { sendPush } from "../lib/notificationScheduler";
 
 const router: IRouter = Router();
+
+const VIDEO_TOKEN_TTL_SECONDS = 3600; // 1 hour — Twilio max is 24h, 1h is plenty for an emergency room
 
 function isVideoConfigured(): boolean {
   return !!(
@@ -54,23 +57,29 @@ router.post("/video/token", async (req: Request, res: Response) => {
     });
   }
 
-  // TWILIO VIDEO — Phase 2 camera integration
-  // Once creds exist, swap this stub for:
-  //   import twilio from "twilio";
-  //   const AccessToken = twilio.jwt.AccessToken;
-  //   const VideoGrant = AccessToken.VideoGrant;
-  //   const token = new AccessToken(
-  //     process.env.TWILIO_ACCOUNT_SID!,
-  //     process.env.TWILIO_API_KEY_SID!,
-  //     process.env.TWILIO_API_KEY_SECRET!,
-  //     { identity, ttl: 3600 }
-  //   );
-  //   token.addGrant(new VideoGrant({ room: roomName }));
-  //   return res.json({ token: token.toJwt(), roomName, identity });
-  return res.status(503).json({
-    error: "video_not_configured",
-    message: "Twilio Video token minting is stubbed. Install twilio-video SDK integration.",
-  });
+  try {
+    const AccessToken = twilio.jwt.AccessToken;
+    const VideoGrant = AccessToken.VideoGrant;
+
+    const token = new AccessToken(
+      process.env.TWILIO_ACCOUNT_SID!,
+      process.env.TWILIO_API_KEY_SID!,
+      process.env.TWILIO_API_KEY_SECRET!,
+      { identity, ttl: VIDEO_TOKEN_TTL_SECONDS }
+    );
+    token.addGrant(new VideoGrant({ room: roomName }));
+
+    logger.info({ identity, roomName }, "Twilio Video access token minted");
+    return res.json({
+      token: token.toJwt(),
+      roomName,
+      identity,
+      ttlSeconds: VIDEO_TOKEN_TTL_SECONDS,
+    });
+  } catch (err) {
+    logger.error({ err, identity, roomName }, "Failed to mint Twilio Video token");
+    return res.status(500).json({ error: "token_mint_failed" });
+  }
 });
 
 /**
