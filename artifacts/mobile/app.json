@@ -14,9 +14,21 @@
       "backgroundColor": "#060a18"
     },
     "ios": {
-      "supportsTablet": false
+      "supportsTablet": false,
+      "bundleIdentifier": "com.terracall.mobile",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Terra Call uses your camera so a trusted caregiver can see you during an emergency check-in. The camera only activates after you give consent and only when a caregiver initiates an emergency call.",
+        "NSMicrophoneUsageDescription": "Terra Call uses your microphone during emergency video check-ins so you can talk with your caregiver."
+      }
     },
-    "android": {},
+    "android": {
+      "package": "com.terracall.mobile",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
+    },
     "web": {
       "favicon": "./assets/images/icon_v2_text.png"
     },
@@ -35,6 +47,19 @@
           "icon": "./assets/images/icon_v2_text.png",
           "color": "#22FF6E",
           "sounds": []
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "13.4"
+          },
+          "android": {
+            "minSdkVersion": 24,
+            "compileSdkVersion": 34,
+            "targetSdkVersion": 34
+          }
         }
       ]
     ],
