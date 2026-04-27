@@ -202,3 +202,22 @@ service cloud.firestore {
 3. Replace placeholder UI in `camera-stream.tsx` with `<TwilioVideoLocalView>` (publish mode) and `<TwilioVideoParticipantView>` (view mode).
 4. **Server-side authorization on `/api/video/initiate`** — currently unauthenticated. Phase B must add: (a) Firebase ID-token verification of the caller, (b) Firestore lookup confirming the caller is a permitted caregiver of the receiver, (c) server-side re-check of the receiver's `cameraConsent` flag. Same hardening applies to `/api/admin/health`.
 5. Detect "call answered" so the 15s escalation timer can be cancelled automatically (today the caregiver must manually tap Cancel after returning to the app).
+
+## v1.1 — Organization / Medicaid schema additions (added before v1.1 build)
+**Status:** Schema-only scaffolding. No new UI yet. Existing collections (`users`, `invites`, `events`) are NOT touched.
+
+### New collections
+- **`organizations`** (`artifacts/mobile/services/organizations.ts`) — B2B accounts: home health agencies, MCOs, hospices, direct consumer. Helper: `createOrganization()`, `getOrganization()`. Schema includes `pmpmRate` for Medicaid contracts.
+- **`auditLogs`** (`artifacts/mobile/services/audit.ts`) — HIPAA append-only audit trail. Helper: `logAudit({ userId, action, details, targetUserId?, organizationId? })`. Wired into: login + logout + account_created (AuthContext), checkin + alert_missed + alert_emergency + alert_im_not_ok (CareDataContext), data_accessed (caregiver dashboard mount, debounced via useRef), profile_updated (both settings screens). Fire-and-forget — never blocks the action.
+- **`careReports`** (`artifacts/mobile/services/careReports.ts`) — periodic care-activity rollups for caregivers / org admins / Medicaid billing. Helper: `createCareReport()`. Report generation logic deferred to v1.1 build.
+
+### users collection — additive fields (new docs only, existing docs untouched)
+Added to `register()` and `recoverProfile()` in `artifacts/mobile/contexts/AuthContext.tsx`:
+- `organizationId` (string|null)
+- `organizationRole` ("case_manager" | "agency_admin" | "member" | null)
+- `hipaaConsentSigned` (boolean, default false)
+- `hipaaConsentDate` (timestamp|null)
+- `npiNumber` (string|null)
+
+### Firestore rules
+`firestore.rules` at repo root contains the recommended ruleset for all new collections plus mirrors of the existing `users`/`invites`/`events` rules. **Must be merged into the live rules in Firebase Console > Firestore Database > Rules** — do not blind-replace, since live rules may differ. Audit logs: client-create-only-as-self, admin-read, no update/delete (v1.1 TODO: move writes to a Cloud Function for true system-only).

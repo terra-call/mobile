@@ -18,6 +18,7 @@ import {
   callNotifyApi,
 } from "@/services/notifications";
 import { logEvent } from "@/services/events";
+import { logAudit } from "@/services/audit";
 import { useAuth } from "./AuthContext";
 
 export type ReceiverStatus = "checked-in" | "missed" | "emergency" | "unknown";
@@ -244,6 +245,12 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
         }
         // Log event for the admin dashboard
         logEvent(user.id, receiverName, "emergency").catch(() => {});
+        // HIPAA audit
+        logAudit({
+          userId: user.id,
+          action: "alert_emergency",
+          details: `Emergency alert fired — ${receiverName} silent ${Math.round(diffMin)}m`,
+        }).catch(() => {});
       } else if (diffMin >= missed && !notifiedRef.current.missed) {
         notifiedRef.current.missed = true;
         // Push notification
@@ -261,6 +268,12 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
         }
         // Log event for the admin dashboard
         logEvent(user.id, receiverName, "missed").catch(() => {});
+        // HIPAA audit
+        logAudit({
+          userId: user.id,
+          action: "alert_missed",
+          details: `Missed check-in alert — ${receiverName} silent ${Math.round(diffMin)}m`,
+        }).catch(() => {});
       }
     };
 
@@ -297,6 +310,13 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
 
     // Log event for the admin dashboard
     logEvent(user.id, user.name ?? "Care Receiver", "checkin").catch(() => {});
+
+    // HIPAA audit
+    logAudit({
+      userId: user.id,
+      action: "checkin",
+      details: "Care receiver recorded a check-in",
+    }).catch(() => {});
   }, [user]);
 
   // I'M NOT OK — manually triggered emergency by care receiver
@@ -320,6 +340,13 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
 
     // Log event for the admin dashboard
     logEvent(user.id, receiverName, "manual_emergency").catch(() => {});
+
+    // HIPAA audit
+    logAudit({
+      userId: user.id,
+      action: "alert_im_not_ok",
+      details: `Care receiver pressed I'M NOT OK (${receiverName})`,
+    }).catch(() => {});
 
     const contacts = await getCaregiverContacts(permittedCaregiversRef.current);
     const cgTokens = contacts.map((c) => c.pushToken).filter(Boolean) as string[];

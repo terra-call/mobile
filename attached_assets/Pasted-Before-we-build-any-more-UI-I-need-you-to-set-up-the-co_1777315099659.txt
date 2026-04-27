@@ -1,0 +1,105 @@
+Before we build any more UI, I need you to set up the correct 
+database structure in Firestore to support business accounts, 
+organizations, and Medicaid partnerships in a future version.
+
+DO NOT touch any existing collections (users, invites). 
+Only ADD new collections alongside what already exists.
+
+Create the following new Firestore collections with the 
+correct structure:
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. ORGANIZATIONS COLLECTION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Collection: "organizations"
+Fields per document:
+- organizationId (string) — auto-generated
+- organizationName (string) — e.g. "ABC Home Health Agency"
+- organizationType (string) — "home_health_agency", "mco", "hospice", "consumer"
+- contactName (string)
+- contactEmail (string)
+- contactPhone (string)
+- address (string)
+- subscriptionTier (string) — "basic", "family", "pro", "enterprise"
+- subscriptionStatus (string) — "active", "inactive", "trial"
+- pmpmRate (number) — per member per month rate for MCO contracts (0 for consumer)
+- contractStartDate (timestamp)
+- contractEndDate (timestamp)
+- createdAt (timestamp)
+- updatedAt (timestamp)
+- isActive (boolean)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2. UPDATE EXISTING USERS COLLECTION SCHEMA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Add these optional fields to new user documents going forward.
+DO NOT modify existing user documents — just add these fields 
+to the user registration flow so new users get them:
+
+- organizationId (string, optional) — links user to an organization
+- organizationRole (string, optional) — "case_manager", "agency_admin", "member"
+- hipaaConsentSigned (boolean) — default false
+- hipaaConsentDate (timestamp, optional)
+- npiNumber (string, optional) — for provider accounts
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+3. AUDIT LOGS COLLECTION (HIPAA requirement)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Collection: "auditLogs"
+Fields per document:
+- logId (string) — auto-generated
+- userId (string) — who performed the action
+- action (string) — e.g. "login", "checkin", "alert_fired", "data_accessed"
+- targetUserId (string, optional) — who was affected
+- organizationId (string, optional)
+- timestamp (timestamp)
+- ipAddress (string, optional)
+- deviceInfo (string, optional)
+- details (string) — plain English description of the action
+
+Start logging these events immediately to auditLogs:
+- User login
+- User logout
+- Check-in recorded
+- Alert fired (missed, emergency, I'M NOT OK)
+- Caregiver viewed care receiver data
+- Profile updated
+- Account created
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+4. CARE ACTIVITY REPORTS COLLECTION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Collection: "careReports"
+Fields per document:
+- reportId (string) — auto-generated
+- careReceiverId (string)
+- caregiverIds (array of strings)
+- organizationId (string, optional)
+- reportPeriodStart (timestamp)
+- reportPeriodEnd (timestamp)
+- totalCheckIns (number)
+- missedCheckIns (number)
+- emergencyAlerts (number)
+- imNotOkAlerts (number)
+- averageResponseTime (number) — in minutes
+- generatedAt (timestamp)
+- generatedBy (string) — userId who requested the report
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+5. FIRESTORE SECURITY RULES UPDATE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Update Firestore security rules to include:
+- organizations: readable by admin and org admins only
+- auditLogs: writable by system only, readable by admin only
+- careReports: readable by the care receiver, their caregivers, 
+  their org admin, and the app admin only
+
+IMPORTANT NOTES:
+- Do NOT delete or modify any existing collections or documents
+- Do NOT change existing user login or registration flow
+- Only ADD new fields and collections
+- Add a code comment above each new collection:
+  // FUTURE — Organization/Medicaid support (v1.1)
+  // Do not modify existing user or invite collections
+- Confirm in your response exactly what was created and 
+  what was NOT touched

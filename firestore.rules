@@ -1,0 +1,117 @@
+// ───────────────────────────────────────────────────────────────────────────
+// Terra Call — Firestore security rules
+//
+// IMPORTANT: This file is a REFERENCE / TEMPLATE.  Firebase reads its rules
+// from the Firebase Console (Firestore Database → Rules), NOT from this repo.
+//
+// The rules below cover BOTH:
+//   • the existing collections that already work in production (`users`,
+//     `invites`, `events`) — copied here so the file is complete and the
+//     rules can be deployed in one paste, AND
+//   • the new collections added for v1.1 organization / Medicaid support
+//     (`organizations`, `auditLogs`, `careReports`).
+//
+// → To deploy: open Firebase Console → Firestore Database → Rules tab,
+//   review each block against your live rules, and publish.  If your live
+//   rules for `users`/`invites`/`events` differ from what is shown below,
+//   keep YOUR live versions and only ADD the three new match blocks
+//   marked `// FUTURE — Organization/Medicaid support (v1.1)`.
+// ───────────────────────────────────────────────────────────────────────────
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helpers ──────────────────────────────────────────────────────────
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isSelf(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+    function isAdmin() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    function isOrgAdmin(orgId) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.organizationId == orgId
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.organizationRole == 'agency_admin';
+    }
+
+    // ── EXISTING — users ─────────────────────────────────────────────────
+    // (Mirror of your live rule.  If your live rule differs, KEEP your live
+    // version and ignore this block.)
+    match /users/{userId} {
+      allow read: if isSignedIn();   // caregivers need to look up their receivers
+      allow create: if isSelf(userId);
+      allow update: if isSelf(userId) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ── EXISTING — invites ───────────────────────────────────────────────
+    match /invites/{inviteId} {
+      allow read, write: if isSignedIn();
+    }
+
+    // ── EXISTING — events (admin dashboard activity feed) ────────────────
+    match /events/{eventId} {
+      allow create: if isSignedIn();
+      allow read: if isAdmin();
+      allow update, delete: if false;
+    }
+
+    // ── FUTURE — Organization/Medicaid support (v1.1) ────────────────────
+    // organizations: B2B account records.
+    // Readable by app admin and by org admins of that organization only.
+    // Writable by app admin only — billing/contract fields (pmpmRate,
+    // subscriptionTier, contractStartDate/EndDate, etc.) must NOT be
+    // mutable by org admins.  Org admins manage their members through
+    // the `users` collection, not the org record.
+    match /organizations/{orgId} {
+      allow read:   if isAdmin() || isOrgAdmin(orgId);
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ── FUTURE — Organization/Medicaid support (v1.1) ────────────────────
+    // auditLogs: HIPAA-required append-only audit trail.
+    //   • Authenticated users may CREATE entries only for their own actions
+    //     (request.resource.data.userId must equal their auth uid).
+    //   • Entries are immutable: no update, no delete, ever.
+    //   • Only the app admin may read.
+    //   • v1.1 TODO: move audit writes to a Cloud Function so the client
+    //     cannot create entries at all and writes are truly system-only.
+    match /auditLogs/{logId} {
+      allow create: if isSignedIn()
+                    && request.resource.data.userId == request.auth.uid;
+      allow read:   if isAdmin();
+      allow update, delete: if false;
+    }
+
+    // ── FUTURE — Organization/Medicaid support (v1.1) ────────────────────
+    // careReports: periodic care-activity rollups.
+    // Readable by:
+    //   • the care receiver themselves
+    //   • any caregiver listed in caregiverIds
+    //   • the organization admin of report.organizationId
+    //   • the app admin
+    // Writable by app admin only (reports are generated server-side; until
+    // v1.1 Cloud Functions ship, only the admin tool may create them).
+    match /careReports/{reportId} {
+      allow read: if isSignedIn() && (
+                       isAdmin()
+                    || resource.data.careReceiverId == request.auth.uid
+                    || request.auth.uid in resource.data.caregiverIds
+                    || (resource.data.organizationId != null
+                        && isOrgAdmin(resource.data.organizationId))
+                  );
+      allow create: if isAdmin();
+      allow update, delete: if isAdmin();
+    }
+  }
+}

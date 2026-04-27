@@ -8,6 +8,7 @@ import {
 import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
 import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { auth, db, isFirebaseConfigured } from "@/services/firebase";
+import { logAudit } from "@/services/audit";
 
 export type UserRole = "care-receiver" | "caregiver" | "family" | "admin";
 
@@ -188,6 +189,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       setPendingRecovery(null);
       setUser(userData);
+
+      // HIPAA audit — successful login
+      logAudit({
+        userId: userData.id,
+        action: "login",
+        details: `User signed in (${userData.email})`,
+      }).catch(() => {});
     } else {
       const raw = await AsyncStorage.getItem(USERS_KEY);
       const users: StoredUser[] = raw ? JSON.parse(raw) : [];
@@ -226,12 +234,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         lastCheckIn: null,
         location: null,
         createdAt: serverTimestamp(),
+        // FUTURE — Organization/Medicaid support (v1.1)
+        // Optional fields for new user documents going forward.
+        // Existing user documents are not touched.
+        organizationId: null,
+        organizationRole: null,
+        hipaaConsentSigned: false,
+        hipaaConsentDate: null,
+        npiNumber: null,
       });
     }
 
     await writeProfileCache(uid, userData);
     setPendingRecovery(null);
     setUser(userData);
+
+    // HIPAA audit — profile recovered (counts as account_created for the doc)
+    logAudit({
+      userId: uid,
+      action: "account_created",
+      details: `Profile recovered for ${email} (role=${role})`,
+    }).catch(() => {});
   }, [pendingRecovery]);
 
   const register = useCallback(async ({ email, password, name, role, phone }: RegisterData) => {
@@ -258,6 +281,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           lastCheckIn: null,
           location: null,
           createdAt: serverTimestamp(),
+          // FUTURE — Organization/Medicaid support (v1.1)
+          // Optional fields for new user documents going forward.
+          // Existing user documents are not touched.
+          organizationId: null,
+          organizationRole: null,
+          hipaaConsentSigned: false,
+          hipaaConsentDate: null,
+          npiNumber: null,
         });
       } catch (fsErr) {
         console.warn("[Terra] Firestore profile write failed — using cache:", fsErr);
@@ -265,6 +296,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       setPendingRecovery(null);
       setUser(userData);
+
+      // HIPAA audit — new account created
+      logAudit({
+        userId: cred.user.uid,
+        action: "account_created",
+        details: `New ${role} account registered (${email.trim()})`,
+      }).catch(() => {});
     } else {
       const raw = await AsyncStorage.getItem(USERS_KEY);
       const users: StoredUser[] = raw ? JSON.parse(raw) : [];
@@ -286,6 +324,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    // HIPAA audit — fire BEFORE signOut so request.auth.uid is still valid,
+    // but DO NOT await: logout must remain instantaneous from the user's
+    // perspective even if the audit write is slow.
+    if (user) {
+      logAudit({
+        userId: user.id,
+        action: "logout",
+        details: `User signed out (${user.email})`,
+      }).catch(() => {});
+    }
+
     setPendingRecovery(null);
     if (isFirebaseConfigured && auth) {
       await AsyncStorage.removeItem(SESSION_KEY);
@@ -295,7 +344,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await AsyncStorage.removeItem(SESSION_KEY);
       setUser(null);
     }
-  }, []);
+  }, [user]);
 
   return (
     <AuthContext.Provider value={{ user, loading, pendingRecovery, login, register, recoverProfile, logout }}>

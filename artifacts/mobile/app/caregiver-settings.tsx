@@ -32,6 +32,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/contexts/AuthContext";
 import { useColors } from "@/hooks/useColors";
 import { auth, db, isFirebaseConfigured } from "@/services/firebase";
+import { logAudit } from "@/services/audit";
 import { createInvite, sendInviteSms } from "@/services/invites";
 
 interface LinkedReceiver {
@@ -189,6 +190,12 @@ export default function CaregiverSettingsScreen() {
         name: name.trim(),
         phone: phone.trim(),
       });
+      // HIPAA audit
+      logAudit({
+        userId: user.id,
+        action: "profile_updated",
+        details: "Caregiver updated name/phone",
+      }).catch(() => {});
       Alert.alert("Saved", "Your profile has been updated.");
     } catch {
       Alert.alert("Error", "Could not save profile. Please try again.");

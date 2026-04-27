@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import { Image } from "expo-image";
 import { router } from "expo-router";
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Alert,
   FlatList,
@@ -20,6 +20,7 @@ import type { CareReceiver } from "@/contexts/CareDataContext";
 import { useCareData } from "@/contexts/CareDataContext";
 import { useColors } from "@/hooks/useColors";
 import { registerForPushNotifications } from "@/services/notifications";
+import { logAudit } from "@/services/audit";
 
 type FilterType = "all" | "safe" | "issues";
 
@@ -30,6 +31,20 @@ export default function CaregiverDashboard() {
   const insets = useSafeAreaInsets();
   const [filter, setFilter] = useState<FilterType>("all");
   const [refreshing, setRefreshing] = useState(false);
+
+  // HIPAA audit — log once per session when caregiver loads care-receiver data.
+  // Debounced via ref so we don't write a row on every re-render.
+  const dataAccessAuditedRef = useRef(false);
+  useEffect(() => {
+    if (dataAccessAuditedRef.current) return;
+    if (!user || careReceivers.length === 0) return;
+    dataAccessAuditedRef.current = true;
+    logAudit({
+      userId: user.id,
+      action: "data_accessed",
+      details: `Caregiver opened dashboard, viewing ${careReceivers.length} care receiver(s)`,
+    }).catch(() => {});
+  }, [user, careReceivers.length]);
 
   const topPadding = Platform.OS === "web" ? 67 : insets.top;
   const bottomPadding = Platform.OS === "web" ? 34 : insets.bottom;
