@@ -19,7 +19,9 @@ export type AuditAction =
   | "profile_updated"
   | "organization_created"
   | "organization_updated"
-  | "user_updated";
+  | "user_updated"
+  | "care_report_generated"
+  | "care_report_exported";
 
 export interface LogAuditParams {
   userId: string;
