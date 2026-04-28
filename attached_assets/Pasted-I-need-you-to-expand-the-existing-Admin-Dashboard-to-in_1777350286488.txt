@@ -1,0 +1,126 @@
+I need you to expand the existing Admin Dashboard to include full 
+B2B business management capabilities. The Firestore database already 
+has the correct collections in place (organizations, auditLogs, 
+careReports). Now I need the UI built on top of them.
+
+DO NOT remove or replace any existing Admin Dashboard cards. 
+ADD the following new sections below what already exists.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 1 — SECURITY FIX (do this first)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Tighten the Firestore security rule for the users collection 
+so that only the admin role and the individual user themselves 
+can read user documents. Apply the same isAdmin() pattern 
+already used in the audit/events/careReports rules.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 2 — ORGANIZATION MANAGEMENT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Add an Organizations tab to the Admin Dashboard that shows:
+
+LIST VIEW:
+- Table of all organizations in the organizations collection
+- Columns: Organization Name, Type, Subscription Tier, 
+  Status (Active/Inactive), Member Count, Contract End Date
+- Search bar to filter by name
+- "Add Organization" button
+
+ADD/EDIT ORGANIZATION FORM:
+- Organization Name
+- Organization Type (dropdown: Home Health Agency, MCO, 
+  Hospice, Consumer)
+- Contact Name, Email, Phone
+- Address
+- Subscription Tier (dropdown: Basic, Family, Pro, Enterprise)
+- PMPM Rate (number field — for MCO contracts)
+- Contract Start Date and End Date
+- Active toggle (yes/no)
+- Save button writes to organizations collection in Firestore
+
+ORGANIZATION DETAIL VIEW:
+- Click any organization to see its detail page
+- Shows all organization fields
+- Shows list of all users linked to this organization
+  (users where organizationId matches)
+- Shows total check-ins, alerts, and active members for 
+  this organization
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 3 — USER MANAGEMENT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Add a Users tab to the Admin Dashboard that shows:
+
+LIST VIEW:
+- Table of all users
+- Columns: Name, Email, Role, Organization, 
+  Last Check-In, Status, Account Created Date
+- Search bar to filter by name or email
+- Filter by role (Care Receiver, Caregiver, Admin)
+- Filter by organization
+
+USER DETAIL VIEW:
+- Click any user to see their detail page
+- Shows all profile fields
+- Shows their check-in history (last 10)
+- Shows their alert history (last 10)
+- Admin actions:
+  - Assign to Organization (dropdown of organizations)
+  - Change Role
+  - Suspend Account (sets isActive to false)
+  - Delete Account
+  - Reset Password (sends reset email via Firebase Auth)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 4 — CASE MANAGER PORTAL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Add a Care Reports tab that shows:
+
+- List of all care receivers across all organizations
+- Each row shows: Name, Organization, Last Check-In, 
+  Alert Count (7 days), Compliance Rate (% check-ins completed)
+- Filter by organization
+- Click any care receiver to see their full care activity report:
+  - Check-in history with timestamps
+  - Alert history (missed, emergency, I'M NOT OK)
+  - Caregiver response times
+  - Compliance rate for selected date range
+- Export button — generates a PDF or CSV report for 
+  the selected care receiver and date range
+- Write report summary to careReports collection in Firestore
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 5 — AUDIT LOG VIEWER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Add an Audit Log tab that shows:
+
+- Table of all entries in the auditLogs collection
+- Columns: Timestamp, User Name, Action, Target User, 
+  Organization, Details
+- Filter by date range
+- Filter by action type
+- Filter by user
+- Export to CSV button
+- This tab is visible to Admin only — never to caregivers 
+  or care receivers
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DESIGN REQUIREMENTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- Add a tab navigation bar at the top of the Admin Dashboard:
+  Overview | Organizations | Users | Care Reports | Audit Log
+- Overview tab = the existing 4 cards (keep exactly as is)
+- Each new tab is a separate view within the same Admin screen
+- Keep the same navy/teal color scheme
+- Mobile-friendly — tables should scroll horizontally on small screens
+- All data reads from Firestore in real time
+
+IMPORTANT:
+- Do NOT touch Care Receiver or Caregiver screens
+- Do NOT modify existing users or invites collections
+- Do NOT change existing login or registration flow
+- Build one tab at a time — confirm each one works before 
+  moving to the next
+- Start with the Security Fix, then Overview tab cleanup, 
+  then Organizations, then Users, then Care Reports, 
+  then Audit Log
