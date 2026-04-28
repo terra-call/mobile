@@ -217,6 +217,10 @@ function GenerateForm({
   const [generating, setGenerating] = useState(false);
   const [preview, setPreview] = useState<CreateCareReportInput | null>(null);
   const [saving, setSaving] = useState(false);
+  // Inline validation message shown above the Generate button. Preferred over
+  // Alert.alert because react-native-web's Alert maps to window.alert which is
+  // suppressed in headless browsers and can be dismissed before users see it.
+  const [validationError, setValidationError] = useState<string | null>(null);
   // Track exactly which inputs the current preview was generated from. If the
   // admin changes any input afterwards, the preview is considered stale and
   // Save/Export are disabled until the user regenerates.
@@ -260,18 +264,19 @@ function GenerateForm({
 
   const handleGenerate = async () => {
     if (!actor) return;
+    setValidationError(null);
     if (!selectedUser) {
-      Alert.alert("Required", "Select a care receiver first.");
+      setValidationError("Select a care receiver first.");
       return;
     }
     const start = parseInputDate(startDate);
     const end = parseInputDate(endDate);
     if (!start || !end) {
-      Alert.alert("Invalid date", "Use YYYY-MM-DD for both dates.");
+      setValidationError("Use YYYY-MM-DD for both dates.");
       return;
     }
     if (end < start) {
-      Alert.alert("Invalid range", "End date must be on or after start date.");
+      setValidationError("End date must be on or after start date.");
       return;
     }
 
@@ -447,6 +452,18 @@ function GenerateForm({
             />
           </FormField>
         </FormCard>
+
+        {validationError && (
+          <View
+            style={s.validationBox}
+            accessibilityRole="alert"
+            accessibilityLiveRegion="assertive"
+            testID="care-report-validation-error"
+          >
+            <Feather name="alert-circle" size={14} color={COLORS.RED} />
+            <Text style={s.validationText}>{validationError}</Text>
+          </View>
+        )}
 
         <Pressable
           onPress={handleGenerate}
@@ -981,6 +998,24 @@ const s = StyleSheet.create({
   },
   primaryBtnText: { color: COLORS.TEXT, fontWeight: "700", fontSize: 15 },
 
+  validationBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "rgba(255, 70, 90, 0.08)",
+    borderWidth: 1,
+    borderColor: COLORS.RED,
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 8,
+  },
+  validationText: {
+    color: COLORS.RED,
+    fontSize: 12,
+    flex: 1,
+    lineHeight: 16,
+    fontWeight: "600",
+  },
   staleWarning: {
     flexDirection: "row",
     alignItems: "center",

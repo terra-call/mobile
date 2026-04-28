@@ -1,249 +1,61 @@
 # Terra Call — Emergency Caregiver Monitoring
 
-## Project Overview
-React Native mobile app (Expo) that lets care receivers tap a big "I'M OK" button to check in, while caregivers get a real-time dashboard with statuses, a location map, and an emergency call screen.
+## Overview
+Terra Call is a React Native mobile application built with Expo designed to facilitate emergency care monitoring. It allows care receivers to easily check in with a prominent "I'M OK" button, while providing caregivers with a real-time dashboard displaying statuses, location tracking, and an emergency call interface. The project aims to enhance safety and provide peace of mind for both care receivers and their caregivers, with future expansion into B2B solutions for organizations like home health agencies and Medicaid providers.
 
-## Design System
-- Background: `#060a18` (deep space)
-- Card: `#0c1628`
-- Primary: `#22FF6E` (neon green)
-- Accent: `#00C8FF` (electric blue)
-- Emergency: `#FF3B30`
-- Muted: `#8892B0`
-- Logo: `artifacts/mobile/assets/images/terra_logo.jpg`
+## User Preferences
+- I want iterative development.
+- I want detailed explanations.
+- Ask before making major changes.
+- Do not make changes to folder `Z`.
+- Do not make changes to file `Y`.
 
-## Architecture
+## System Architecture
 
-### Artifacts
-- `artifacts/mobile` — Expo React Native app (slug: `mobile`, previewPath: `/`)
-- `artifacts/api-server` — Express API server (port 8080, all routes mounted under `/api`)
-- `artifacts/mockup-sandbox` — Vite component preview server
+### Design System
+The application uses a dark theme with a `deep space` background and `card` elements. Key interactive elements are highlighted with `neon green` (primary) and `electric blue` (accent). Emergency indicators are `red`, and muted text uses a `grayish blue`.
 
-### Caregiver Linking (Invite Code System)
-Caregivers generate a 6-digit invite code in their Settings screen. The code is stored in Firestore as `invites/{code}` with `caregiverId`, `caregiverName`, `caregiverEmail`, `expiresAt` (24h TTL), and `redeemedBy` (null until used). Caregivers can optionally text the code to a phone number via Twilio (POST `/api/invites/sms`, rate-limited to 10/IP/hour). Care receivers enter the code in their Settings → Caregivers section; redemption uses a Firestore transaction (`runTransaction`) to atomically link the caregiver to `permittedCaregivers` and mark the invite as redeemed (single-use). Service: `artifacts/mobile/services/invites.ts`.
+### Project Structure
+The project is organized into three main artifacts:
+- **`artifacts/mobile`**: The Expo React Native mobile application.
+- **`artifacts/api-server`**: An Express.js API server running on port 8080, with all routes under `/api`.
+- **`artifacts/mockup-sandbox`**: A Vite component preview server for UI development.
 
-#### Required Firestore Security Rules
-The `invites` collection is new and needs explicit rules. Add this block alongside the existing `users` rules in the Firebase Console (Firestore → Rules):
+### Core Features and Technologies
+- **Authentication**: Firebase Authentication (email/password).
+- **Database**: Firestore for real-time data storage, managing user profiles, statuses, and configurations.
+  - `users` collection stores user details, roles (`care-receiver`, `caregiver`, `admin`), check-in status, location, and notification settings.
+  - `invites` collection handles caregiver-care receiver linking via invite codes.
+  - `events` collection logs user actions like check-ins, missed alerts, and emergencies.
+  - `organizations` collection supports B2B accounts with fields for Medicaid contracts.
+  - `auditLogs` collection provides an append-only audit trail for HIPAA compliance.
+  - `careReports` collection stores periodic care activity rollups.
+- **User Roles**: Supports "care-receiver", "caregiver", and "admin" roles.
+- **Status Monitoring**: Care receivers' check-in status (`checked-in`, `missed`, `emergency`, `unknown`) is dynamically calculated based on configurable time windows (`missedWindowMin`, `escalationWindowMin`) stored in Firestore.
+- **Push Notifications**: Utilizes `expo-notifications` for both local reminders on the care receiver's device and push notifications to caregivers when status windows are exceeded. The API server includes endpoints for scheduling, check-in recording, and direct push sending.
+- **Video Conferencing (Scaffolding)**: Integration with Twilio Video for camera activation (Phase A complete, Phase B pending Twilio API keys and native build). This includes server-side routes for initiating camera activation and generating access tokens, and client-side components for consent and stream display.
+- **Admin Dashboard**: Provides an administrative interface for managing users, organizations, care reports, and audit logs. It includes features like user metrics, activity metrics, system health, and recent activity, with extensive B2B functionalities.
 
-```
-match /invites/{code} {
-  // Anyone signed in can look up an invite by its code (needed for redeem)
-  allow read: if request.auth != null;
+### Key Architectural Decisions
+- **Real-time Data**: Extensive use of Firestore for real-time updates across the application, especially for caregiver dashboards and status monitoring.
+- **Offline Fallback**: Contexts like `AuthContext` and `CareDataContext` incorporate `AsyncStorage` for potential offline data access or demo data.
+- **Modular Design**: Services (`firebase.ts`, `invites.ts`, `notifications.ts`, `video.ts`, `organizations.ts`, `audit.ts`, `careReports.ts`, `reportExport.ts`, `users.ts`) encapsulate specific functionalities.
+- **UI/UX**: Consistent design system using color tokens and reusable components. Responsive mapping with `react-native-maps` for mobile and a coordinate list fallback for web.
+- **Security**: Firestore security rules are crucial for managing data access based on user roles and relationships. Rules are defined for `users`, `invites`, `events`, `organizations`, `auditLogs`, and `careReports` collections.
+- **Firestore Indexes**: Composite indexes required by code are tracked in `firestore.indexes.json` (repo root). Care report generation needs the `events` index on (`userId` ASC, `createdAt` ASC) — must be deployed via Firebase Console or `firebase deploy --only firestore:indexes` before that flow works.
+- **Auditability**: Implementation of an append-only audit log for HIPAA compliance, tracking user actions and data access.
+- **Report Generation**: Care report generation includes client-side aggregation of events, secure export options (CSV/PDF), and PHI hygiene for temporary files.
 
-  // Only the caregiver themselves can create their invite
-  allow create: if request.auth != null
-    && request.resource.data.caregiverId == request.auth.uid
-    && request.resource.data.redeemedBy == null;
+## External Dependencies
 
-  // Updates allowed only to mark redeemed (by the redeemer themselves)
-  allow update: if request.auth != null
-    && resource.data.redeemedBy == null
-    && request.resource.data.redeemedBy == request.auth.uid
-    && request.resource.data.caregiverId == resource.data.caregiverId;
-}
-```
-
-### Key Files
-```
-artifacts/mobile/
-  app/
-    _layout.tsx              # Root layout (AuthProvider + CareDataProvider)
-    index.tsx                # Auth gate / redirect
-    (auth)/
-      login.tsx              # Sign in screen
-      register.tsx           # Role-select registration
-    (care-receiver)/
-      index.tsx              # Animated "I'M OK" button
-    (caregiver)/
-      index.tsx              # Dashboard: status cards + stats
-      map.tsx                # Location map screen
-    emergency-call.tsx       # Fullscreen emergency modal
-  contexts/
-    AuthContext.tsx           # Firebase Auth + AsyncStorage fallback
-    CareDataContext.tsx       # Firestore real-time + AsyncStorage fallback
-  services/
-    firebase.ts              # Firebase app / auth / db initialization
-  components/
-    MapDisplay.native.tsx    # react-native-maps (iOS/Android only)
-    MapDisplay.tsx           # Coordinates list (web fallback)
-  constants/
-    colors.ts                # Design tokens
-  hooks/
-    useColors.ts             # Theme color hook
-```
-
-### Firebase (terra-call-9335b)
-- **Auth**: Email/password via Firebase Auth
-- **Firestore collection `users/{uid}`**:
-  ```
-  {
-    name: string
-    email: string
-    role: "care-receiver" | "caregiver" | "family"
-    phone?: string
-    lastCheckIn?: Timestamp | null
-    status?: string
-    location?: { lat, lng } | null
-    createdAt: Timestamp
-  }
-  ```
-- Caregivers see all users where `role == "care-receiver"` in real time
-- Care receivers update `lastCheckIn` + `status` on check-in
-- Falls back to demo data if Firestore has no real care receivers
-
-### Status Computation
-- Status windows are now **configurable per care receiver** (stored in Firestore as `missedWindowMin` / `escalationWindowMin`)
-- Defaults: `< 30 min` → `checked-in`, `30–120 min` → `missed`, `> 120 min` → `emergency`, no check-in → `unknown`
-- Caregiver dashboard uses each receiver's personal window settings
-
-### Firestore fields added to `users/{uid}` for care receivers
-```
-notificationsEnabled: boolean
-checkInScheduleType: "4h" | "8h" | "12h" | "24h" | "custom"
-checkInCustomHour: number
-checkInCustomMinute: number
-missedWindowMin: number
-escalationWindowMin: number
-expoPushToken: string (Expo push token, set on login)
-```
-
-### Push Notifications Architecture
-- **`expo-notifications` v0.32.16** installed — handles local reminders + push token registration
-- **Local reminders**: Scheduled on care receiver's device at configured interval (works in Expo Go on real device; requires native build for reliable background delivery)
-- **Caregiver alerts**: Care receiver's app monitors status every 60s; if missed/emergency window exceeded, sends push notification to caregivers' Expo push tokens via `https://exp.host/--/api/v2/push/send`
-- **API server scheduler**: Runs every 60s; receives schedules via `POST /api/notify/schedule`, check-ins via `POST /api/notify/checkin`, sends direct pushes via `POST /api/notify/send`
-- **Token registration**: Passive — `registerForPushNotifications` only fetches/stores token if permission is ALREADY granted. Token saved to `users/{uid}.expoPushToken`
-- **Friendly pre-prompt**: `<NotificationPermissionPrompt />` in care-receiver home shows a branded modal explaining the value before triggering OS dialog. Uses `getNotificationPermissionStatus()` (passive check) + `requestNotificationPermissions()` (explicit request). Dismissal tracked via `STORAGE_KEYS.NOTIF_PROMPT_SEEN` so user only sees it once.
-- **Native build required** for: reliable background delivery, Expo push token issuance from EAS
-
-### API Server Notification Endpoints
-- `POST /api/notify/send` — Send push to arbitrary token list
-- `POST /api/notify/schedule` — Register care receiver's check-in schedule
-- `POST /api/notify/checkin` — Record check-in (resets notification state)
-- `GET /api/notify/schedule/:userId` — Debug: view schedule state
-
-## Environment Variables
-| Key | Purpose |
-|-----|---------|
-| `EXPO_PUBLIC_FIREBASE_API_KEY` | Firebase Web API key |
-| `EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN` | Firebase auth domain |
-| `EXPO_PUBLIC_FIREBASE_PROJECT_ID` | Firestore project |
-| `EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET` | Firebase Storage |
-| `EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID` | FCM sender |
-| `EXPO_PUBLIC_FIREBASE_APP_ID` | Firebase app ID |
-| `SESSION_SECRET` | API server session secret |
-
-## Known Limitations / Next Steps
-- Push notifications (Firebase Messaging) require an EAS native build — not available in Expo Go
-- `react-native-maps` pinned to 1.18.0 for Expo Go compatibility (map only works on iOS/Android, not web)
-- No caregiver ↔ receiver invitation/linking flow yet — caregivers see all care-receivers in Firestore
-- Firestore security rules must be configured in Firebase Console (currently open read/write for auth'd users assumed)
-
-## Firestore Security Rules (recommended)
-```
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-
-    function isAdmin() {
-      return request.auth != null
-        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == "admin";
-    }
-
-    match /users/{userId} {
-      // Caregivers need to read other users to find their care receivers
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && (request.auth.uid == userId || isAdmin());
-    }
-
-    match /events/{eventId} {
-      // Any authenticated user can log their own events
-      allow create: if request.auth != null
-        && request.resource.data.userId == request.auth.uid
-        && request.resource.data.type in ["checkin","missed","emergency","manual_emergency"];
-      // Only admin can read or list the event log
-      allow read, list: if isAdmin();
-      allow update, delete: if false;
-    }
-  }
-}
-```
-
-## Week 4 — Admin Dashboard
-- Fourth user role: `"admin"` (defined in `artifacts/mobile/contexts/AuthContext.tsx`)
-- Auto-promotion: anyone logging in with email `mike@terra-call.com` is automatically given the admin role and routed to `/(admin)/`
-- Dashboard at `artifacts/mobile/app/(admin)/index.tsx` — 4 cards: User Metrics, Activity Metrics, System Health, Recent Activity
-- Event logging: `artifacts/mobile/services/events.ts` writes to top-level `events` collection on check-in / missed / emergency / manual_emergency
-- API health endpoint: `GET /api/admin/health` returns Twilio SMS delivery rate over last 24h (phone numbers are masked to `***1234`)
-- Note: server-side missed-alert events fired by the api-server scheduler are NOT logged to Firestore — only device-side events are. This is an accepted MVP limitation.
-- Follow-up: add Firebase ID-token verification to `/api/admin/health` (currently public; only exposes aggregate counters)
-
-## Week 4 — Twilio Video Camera Activation (Phase A scaffolding)
-**Status:** Scaffolding done & verified end-to-end. Real Twilio Video SDK integration deferred to Phase B (requires API Key + EAS dev build).
-
-### What works today
-- **Server routes** (`artifacts/api-server/src/routes/video.ts`):
-  - `POST /api/video/initiate` — sends `camera_activate` push to receiver. Validates Expo token format. Returns 502 if Expo dispatch fails, 400 on bad input, 500 on internal error. Returns `{ ok, roomName, pushSent, videoConfigured }`.
-  - `POST /api/video/token` — returns 503 `video_not_configured` until `TWILIO_API_KEY_SID` + `TWILIO_API_KEY_SECRET` are set; then mints Twilio Video access tokens (stub today).
-  - Mounted via `router.use(videoRouter)` in `routes/index.ts` (the app already prefixes everything with `/api`).
-  - `sendPush()` in `lib/notificationScheduler.ts` now returns `{ validTokens, delivered }` so callers can detect dispatch failure.
-- **Mobile**:
-  - `services/video.ts` — `getCameraConsent`, `getReceiverPushToken`, `buildVideoRoomName`, `initiateCameraActivation` helpers.
-  - `components/CameraConsentModal.tsx` — full-screen modal; writes `cameraConsent: bool` to `users/{uid}` via `setDoc(merge:true)`.
-  - `app/(care-receiver)/index.tsx` — shows consent modal once if `cameraConsent` is missing OR the user doc doesn't exist.
-  - `app/emergency-call.tsx` — 15-second unanswered-call timer with Cancel button. Timer only starts AFTER `Linking.openURL` succeeds, so a failed dial cannot silently trigger camera activation. On expiry: checks consent + push token, calls `/api/video/initiate`, navigates to `camera-stream?mode=view`.
-  - `app/camera-stream.tsx` — placeholder UI (`mode=publish` for receiver, `mode=view` for caregiver) with End Stream button + active red banner. All Twilio Video native SDK calls marked `// TWILIO VIDEO — Phase 2 camera integration`.
-  - `app/_layout.tsx` — registers `camera-stream` route + `CameraActivationListener` that handles `type=camera_activate` notifications and routes the receiver into `camera-stream?mode=publish`.
-
-### Deferred to Phase B (when user has Twilio Video API Key + Secret + EAS dev build)
-1. `pnpm add @twilio/video-react-native-sdk` and run `expo prebuild` → EAS dev build (Expo Go won't load the native module).
-2. Add `TWILIO_API_KEY_SID` and `TWILIO_API_KEY_SECRET` secrets, then implement Twilio access-token minting in `/api/video/token`.
-3. Replace placeholder UI in `camera-stream.tsx` with `<TwilioVideoLocalView>` (publish mode) and `<TwilioVideoParticipantView>` (view mode).
-4. **Server-side authorization on `/api/video/initiate`** — currently unauthenticated. Phase B must add: (a) Firebase ID-token verification of the caller, (b) Firestore lookup confirming the caller is a permitted caregiver of the receiver, (c) server-side re-check of the receiver's `cameraConsent` flag. Same hardening applies to `/api/admin/health`.
-5. Detect "call answered" so the 15s escalation timer can be cancelled automatically (today the caregiver must manually tap Cancel after returning to the app).
-
-## v1.1 — Organization / Medicaid schema additions (added before v1.1 build)
-**Status:** Schema-only scaffolding. No new UI yet. Existing collections (`users`, `invites`, `events`) are NOT touched.
-
-### New collections
-- **`organizations`** (`artifacts/mobile/services/organizations.ts`) — B2B accounts: home health agencies, MCOs, hospices, direct consumer. Helper: `createOrganization()`, `getOrganization()`. Schema includes `pmpmRate` for Medicaid contracts.
-- **`auditLogs`** (`artifacts/mobile/services/audit.ts`) — HIPAA append-only audit trail. Helper: `logAudit({ userId, action, details, targetUserId?, organizationId? })`. Wired into: login + logout + account_created (AuthContext), checkin + alert_missed + alert_emergency + alert_im_not_ok (CareDataContext), data_accessed (caregiver dashboard mount, debounced via useRef), profile_updated (both settings screens). Fire-and-forget — never blocks the action.
-- **`careReports`** (`artifacts/mobile/services/careReports.ts`) — periodic care-activity rollups for caregivers / org admins / Medicaid billing. Helper: `createCareReport()`. Report generation logic deferred to v1.1 build.
-
-### users collection — additive fields (new docs only, existing docs untouched)
-Added to `register()` and `recoverProfile()` in `artifacts/mobile/contexts/AuthContext.tsx`:
-- `organizationId` (string|null)
-- `organizationRole` ("case_manager" | "agency_admin" | "member" | null)
-- `hipaaConsentSigned` (boolean, default false)
-- `hipaaConsentDate` (timestamp|null)
-- `npiNumber` (string|null)
-
-### Firestore rules
-`firestore.rules` at repo root contains the recommended ruleset for all new collections plus mirrors of the existing `users`/`invites`/`events` rules. **Must be merged into the live rules in Firebase Console > Firestore Database > Rules** — do not blind-replace, since live rules may differ. Audit logs: client-create-only-as-self, admin-read, no update/delete (v1.1 TODO: move writes to a Cloud Function for true system-only).
-
-**Live published rules (Firebase Console, as of Apr 27 2026):** users/invites (original rules, untouched) + isAdmin + isOrgAdmin helpers + organizations + auditLogs + careReports + events. Verified by login audit row appearing in Firestore Data viewer.
-
-## v1.1 — Admin Dashboard B2B expansion (complete)
-**Refactor:** `app/(admin)/index.tsx` is now a thin wrapper. Tab content lives in `components/admin/`:
-- `shared.tsx` — color tokens (COLORS), reusable Card/Stat/HealthRow/PlaceholderTab
-- `AdminTabs.tsx` — horizontal scrolling tab nav (Overview · Organizations · Users · Care Reports · Audit Log)
-- `OverviewTab.tsx` — original 4 cards (User Metrics · Activity Metrics · System Health · Recent Activity), behavior-identical to pre-refactor
-- `OrganizationsTab.tsx` — list/form/detail sub-views in one component, internal `view` state. Reads/writes `organizations` collection via `services/organizations.ts`. Form has option-pill selectors (no native picker dependency) and YYYY-MM-DD text-entry dates (no datetimepicker dependency). Audit actions added: `organization_created`, `organization_updated`.
-- `UsersTab.tsx` — list (search + role-filter pills + role-color avatars + per-row org name) and edit (name/phone/role + organization assignment + organizationRole + HIPAA consent Switch + NPI). Diff-based save: only changed fields go to Firestore. Self-demotion guard blocks an admin from removing their own admin role. Audit action: `user_updated`.
-- `CareReportsTab.tsx` — list / generate / detail sub-views. Generate flow: pick care-receiver (search + role-aware list), YYYY-MM-DD date range, click Generate to aggregate `events` collection into a CareReport preview, then Save to Firestore + Export CSV/PDF. Stale-input detection blocks save/export when inputs change after generation. Audit actions: `care_report_generated`, `care_report_exported`. Uses `services/reportExport.ts` (expo-print + expo-sharing + expo-file-system/legacy) — temp files written to cacheDirectory and deleted post-share for PHI hygiene; CSV-injection escape on every cell.
-- `AuditLogTab.tsx` — paginated viewer for `auditLogs` collection. Server-side: `orderBy(timestamp desc)` + optional date range + `startAfter` cursor (no compound index needed). Client-side: action filter (modal) + free-text search across user/details/target/org. Request-version guard on cursorRef so refresh-vs-load-more cannot mix stale pages. CSV export of currently loaded entries with explicit confirm if more pages remain.
-
-`services/organizations.ts` now exports: `createOrganization`, `updateOrganization`, `getOrganization`, `listOrganizations`, `getOrganizationMemberCounts`, `getOrganizationStats` (members + activity rollup), `listOrganizationMembers`.
-
-`services/users.ts` (new) exports: `listUsers`, `updateUserAdmin`. The update helper auto-stamps `hipaaConsentDate=serverTimestamp()` when consent flips on, and clears it on flip-off.
-
-`services/careReports.ts` exports: `createCareReport`, `getCareReportById`, `listCareReports`, `generateCareReportData` (fail-closed event aggregation — throws on Firestore error rather than silently returning zeros). `services/reportExport.ts` exports: `exportReportAsCSV`, `exportReportAsPDF`, plus pure formatters `formatReportAsCSV` / `formatReportAsHTML`.
-
-`services/audit.ts` extended: `listAuditLogs({ pageSize, rangeStart, rangeEnd, cursor })` returns `{ entries, cursor, done }` for cursor-based pagination. `AuditAction` union extended with `care_report_generated`, `care_report_exported`.
-
-**Live Firestore rule update needed for Users tab to work:** the published `users` write rule must include `|| isAdmin()` for admin edits to other users. The repo's `firestore.rules` line 51 already has `allow update: if isSelf(userId) || isAdmin();` — just needs to be merged into the live ruleset in Firebase Console. Until then, admins can only edit their own user doc; the Save Failed alert explains how to fix it.
-
-## v1.2 — Backlog (deferred)
-- **Paginated user/report fetches in admin dashboard.** `services/users.ts:listUsers()` and `services/careReports.ts:listCareReports()` both pull entire collections client-side. UI already client-side filters and slices, but at scale (large B2B orgs / many reports) this needs server-side pagination, or query-by-org / query-by-care-receiver filters. Out of scope for v1.1 dashboard build.
-- **Tighten the `users` collection security rule.** Current live rule allows `read: if request.auth != null` (any authenticated user can read any other user's doc). Cannot simply tighten to `isAdmin() || self` because 6 legitimate cross-user read paths exist: `caregiver-settings.tsx:129` (caregiver lists all care-receivers), `CareDataContext.tsx:151` (caregiver lists their care-receivers), `services/video.ts:25,75` (video call receiver lookup), `services/notifications.ts:180` (caregiver lookup for push), `services/invites.ts:99` (cross-user write on invite redemption), `(care-receiver)/index.tsx:199` (care-receiver lists all caregivers). Proper fix requires either (a) splitting users into public-profile sub-collection vs. private profile fields, or (b) writing a relationship-aware rule using `permittedCaregivers` array — both are real refactors out of scope for v1.1 dashboard build.
+- **Firebase**:
+  - **Firebase Authentication**: User authentication.
+  - **Firestore**: Primary NoSQL database for real-time data.
+- **Expo**:
+  - **`expo-notifications`**: For managing push notifications and local reminders.
+  - **`expo-print`**, **`expo-sharing`**, **`expo-file-system/legacy`**: Used for generating and exporting care reports (CSV/PDF).
+- **Twilio**:
+  - **Twilio Video**: For real-time video streaming (scaffolding in place, full integration pending).
+  - **Twilio SMS**: Potentially used for sending invite codes (rate-limited).
+- **Express.js**: For the API server backend.
+- **React Native Maps**: For map display functionality on mobile devices.
