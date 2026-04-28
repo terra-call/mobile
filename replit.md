@@ -221,3 +221,18 @@ Added to `register()` and `recoverProfile()` in `artifacts/mobile/contexts/AuthC
 
 ### Firestore rules
 `firestore.rules` at repo root contains the recommended ruleset for all new collections plus mirrors of the existing `users`/`invites`/`events` rules. **Must be merged into the live rules in Firebase Console > Firestore Database > Rules** — do not blind-replace, since live rules may differ. Audit logs: client-create-only-as-self, admin-read, no update/delete (v1.1 TODO: move writes to a Cloud Function for true system-only).
+
+**Live published rules (Firebase Console, as of Apr 27 2026):** users/invites (original rules, untouched) + isAdmin + isOrgAdmin helpers + organizations + auditLogs + careReports + events. Verified by login audit row appearing in Firestore Data viewer.
+
+## v1.1 — Admin Dashboard B2B expansion (in progress)
+**Refactor:** `app/(admin)/index.tsx` is now a thin wrapper. Tab content lives in `components/admin/`:
+- `shared.tsx` — color tokens (COLORS), reusable Card/Stat/HealthRow/PlaceholderTab
+- `AdminTabs.tsx` — horizontal scrolling tab nav (Overview · Organizations · Users · Care Reports · Audit Log)
+- `OverviewTab.tsx` — original 4 cards (User Metrics · Activity Metrics · System Health · Recent Activity), behavior-identical to pre-refactor
+- `OrganizationsTab.tsx` — list/form/detail sub-views in one component, internal `view` state. Reads/writes `organizations` collection via `services/organizations.ts`. Form has option-pill selectors (no native picker dependency) and YYYY-MM-DD text-entry dates (no datetimepicker dependency). Audit actions added: `organization_created`, `organization_updated`.
+- `UsersTab.tsx` / `CareReportsTab.tsx` / `AuditLogTab.tsx` — placeholders ("Building next" badge), to be implemented one-at-a-time per Mike's directive.
+
+`services/organizations.ts` now exports: `createOrganization`, `updateOrganization`, `getOrganization`, `listOrganizations`, `getOrganizationMemberCounts`, `getOrganizationStats` (members + activity rollup), `listOrganizationMembers`.
+
+## v1.2 — Backlog (deferred)
+- **Tighten the `users` collection security rule.** Current live rule allows `read: if request.auth != null` (any authenticated user can read any other user's doc). Cannot simply tighten to `isAdmin() || self` because 6 legitimate cross-user read paths exist: `caregiver-settings.tsx:129` (caregiver lists all care-receivers), `CareDataContext.tsx:151` (caregiver lists their care-receivers), `services/video.ts:25,75` (video call receiver lookup), `services/notifications.ts:180` (caregiver lookup for push), `services/invites.ts:99` (cross-user write on invite redemption), `(care-receiver)/index.tsx:199` (care-receiver lists all caregivers). Proper fix requires either (a) splitting users into public-profile sub-collection vs. private profile fields, or (b) writing a relationship-aware rule using `permittedCaregivers` array — both are real refactors out of scope for v1.1 dashboard build.

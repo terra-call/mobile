@@ -16,7 +16,9 @@ export type AuditAction =
   | "alert_emergency"
   | "alert_im_not_ok"
   | "data_accessed"
-  | "profile_updated";
+  | "profile_updated"
+  | "organization_created"
+  | "organization_updated";
 
 export interface LogAuditParams {
   userId: string;
