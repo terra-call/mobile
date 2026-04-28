@@ -224,18 +224,23 @@ Added to `register()` and `recoverProfile()` in `artifacts/mobile/contexts/AuthC
 
 **Live published rules (Firebase Console, as of Apr 27 2026):** users/invites (original rules, untouched) + isAdmin + isOrgAdmin helpers + organizations + auditLogs + careReports + events. Verified by login audit row appearing in Firestore Data viewer.
 
-## v1.1 — Admin Dashboard B2B expansion (in progress)
+## v1.1 — Admin Dashboard B2B expansion (complete)
 **Refactor:** `app/(admin)/index.tsx` is now a thin wrapper. Tab content lives in `components/admin/`:
 - `shared.tsx` — color tokens (COLORS), reusable Card/Stat/HealthRow/PlaceholderTab
 - `AdminTabs.tsx` — horizontal scrolling tab nav (Overview · Organizations · Users · Care Reports · Audit Log)
 - `OverviewTab.tsx` — original 4 cards (User Metrics · Activity Metrics · System Health · Recent Activity), behavior-identical to pre-refactor
 - `OrganizationsTab.tsx` — list/form/detail sub-views in one component, internal `view` state. Reads/writes `organizations` collection via `services/organizations.ts`. Form has option-pill selectors (no native picker dependency) and YYYY-MM-DD text-entry dates (no datetimepicker dependency). Audit actions added: `organization_created`, `organization_updated`.
 - `UsersTab.tsx` — list (search + role-filter pills + role-color avatars + per-row org name) and edit (name/phone/role + organization assignment + organizationRole + HIPAA consent Switch + NPI). Diff-based save: only changed fields go to Firestore. Self-demotion guard blocks an admin from removing their own admin role. Audit action: `user_updated`.
-- `CareReportsTab.tsx` / `AuditLogTab.tsx` — placeholders, to be implemented one-at-a-time per Mike's directive.
+- `CareReportsTab.tsx` — list / generate / detail sub-views. Generate flow: pick care-receiver (search + role-aware list), YYYY-MM-DD date range, click Generate to aggregate `events` collection into a CareReport preview, then Save to Firestore + Export CSV/PDF. Stale-input detection blocks save/export when inputs change after generation. Audit actions: `care_report_generated`, `care_report_exported`. Uses `services/reportExport.ts` (expo-print + expo-sharing + expo-file-system/legacy) — temp files written to cacheDirectory and deleted post-share for PHI hygiene; CSV-injection escape on every cell.
+- `AuditLogTab.tsx` — paginated viewer for `auditLogs` collection. Server-side: `orderBy(timestamp desc)` + optional date range + `startAfter` cursor (no compound index needed). Client-side: action filter (modal) + free-text search across user/details/target/org. Request-version guard on cursorRef so refresh-vs-load-more cannot mix stale pages. CSV export of currently loaded entries with explicit confirm if more pages remain.
 
 `services/organizations.ts` now exports: `createOrganization`, `updateOrganization`, `getOrganization`, `listOrganizations`, `getOrganizationMemberCounts`, `getOrganizationStats` (members + activity rollup), `listOrganizationMembers`.
 
 `services/users.ts` (new) exports: `listUsers`, `updateUserAdmin`. The update helper auto-stamps `hipaaConsentDate=serverTimestamp()` when consent flips on, and clears it on flip-off.
+
+`services/careReports.ts` exports: `createCareReport`, `getCareReportById`, `listCareReports`, `generateCareReportData` (fail-closed event aggregation — throws on Firestore error rather than silently returning zeros). `services/reportExport.ts` exports: `exportReportAsCSV`, `exportReportAsPDF`, plus pure formatters `formatReportAsCSV` / `formatReportAsHTML`.
+
+`services/audit.ts` extended: `listAuditLogs({ pageSize, rangeStart, rangeEnd, cursor })` returns `{ entries, cursor, done }` for cursor-based pagination. `AuditAction` union extended with `care_report_generated`, `care_report_exported`.
 
 **Live Firestore rule update needed for Users tab to work:** the published `users` write rule must include `|| isAdmin()` for admin edits to other users. The repo's `firestore.rules` line 51 already has `allow update: if isSelf(userId) || isAdmin();` — just needs to be merged into the live ruleset in Firebase Console. Until then, admins can only edit their own user doc; the Save Failed alert explains how to fix it.
 
