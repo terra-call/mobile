@@ -18,7 +18,8 @@ export type AuditAction =
   | "data_accessed"
   | "profile_updated"
   | "organization_created"
-  | "organization_updated";
+  | "organization_updated"
+  | "user_updated";
 
 export interface LogAuditParams {
   userId: string;

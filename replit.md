@@ -230,9 +230,14 @@ Added to `register()` and `recoverProfile()` in `artifacts/mobile/contexts/AuthC
 - `AdminTabs.tsx` — horizontal scrolling tab nav (Overview · Organizations · Users · Care Reports · Audit Log)
 - `OverviewTab.tsx` — original 4 cards (User Metrics · Activity Metrics · System Health · Recent Activity), behavior-identical to pre-refactor
 - `OrganizationsTab.tsx` — list/form/detail sub-views in one component, internal `view` state. Reads/writes `organizations` collection via `services/organizations.ts`. Form has option-pill selectors (no native picker dependency) and YYYY-MM-DD text-entry dates (no datetimepicker dependency). Audit actions added: `organization_created`, `organization_updated`.
-- `UsersTab.tsx` / `CareReportsTab.tsx` / `AuditLogTab.tsx` — placeholders ("Building next" badge), to be implemented one-at-a-time per Mike's directive.
+- `UsersTab.tsx` — list (search + role-filter pills + role-color avatars + per-row org name) and edit (name/phone/role + organization assignment + organizationRole + HIPAA consent Switch + NPI). Diff-based save: only changed fields go to Firestore. Self-demotion guard blocks an admin from removing their own admin role. Audit action: `user_updated`.
+- `CareReportsTab.tsx` / `AuditLogTab.tsx` — placeholders, to be implemented one-at-a-time per Mike's directive.
 
 `services/organizations.ts` now exports: `createOrganization`, `updateOrganization`, `getOrganization`, `listOrganizations`, `getOrganizationMemberCounts`, `getOrganizationStats` (members + activity rollup), `listOrganizationMembers`.
+
+`services/users.ts` (new) exports: `listUsers`, `updateUserAdmin`. The update helper auto-stamps `hipaaConsentDate=serverTimestamp()` when consent flips on, and clears it on flip-off.
+
+**Live Firestore rule update needed for Users tab to work:** the published `users` write rule must include `|| isAdmin()` for admin edits to other users. The repo's `firestore.rules` line 51 already has `allow update: if isSelf(userId) || isAdmin();` — just needs to be merged into the live ruleset in Firebase Console. Until then, admins can only edit their own user doc; the Save Failed alert explains how to fix it.
 
 ## v1.2 — Backlog (deferred)
 - **Tighten the `users` collection security rule.** Current live rule allows `read: if request.auth != null` (any authenticated user can read any other user's doc). Cannot simply tighten to `isAdmin() || self` because 6 legitimate cross-user read paths exist: `caregiver-settings.tsx:129` (caregiver lists all care-receivers), `CareDataContext.tsx:151` (caregiver lists their care-receivers), `services/video.ts:25,75` (video call receiver lookup), `services/notifications.ts:180` (caregiver lookup for push), `services/invites.ts:99` (cross-user write on invite redemption), `(care-receiver)/index.tsx:199` (care-receiver lists all caregivers). Proper fix requires either (a) splitting users into public-profile sub-collection vs. private profile fields, or (b) writing a relationship-aware rule using `permittedCaregivers` array — both are real refactors out of scope for v1.1 dashboard build.
