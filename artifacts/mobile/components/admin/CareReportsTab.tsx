@@ -245,6 +245,12 @@ function GenerateForm({
     };
   }, []);
 
+  // Clear any visible validation error as soon as the user changes any
+  // input — keeps the banner from looking stale after the user fixes it.
+  useEffect(() => {
+    setValidationError(null);
+  }, [selectedUserId, startDate, endDate]);
+
   const filteredUsers = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return users.slice(0, 25);
