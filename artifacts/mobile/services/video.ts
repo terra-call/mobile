@@ -11,6 +11,12 @@
 // viewer screen all work in Expo Go for end-to-end flow testing.
 // ─────────────────────────────────────────────────────────────────────────────
 
+// TODO — PRE-SUBMISSION (HIGH):
+// 1. Auth the /api/video/token endpoint with Firebase
+//    ID token verification before App Store submission
+// 2. Install @twilio/video-react-native-sdk and test
+//    real room connections via EAS dev build
+
 import { doc, getDoc } from "firebase/firestore";
 import { db, isFirebaseConfigured } from "./firebase";
 import { logAudit } from "./audit";
