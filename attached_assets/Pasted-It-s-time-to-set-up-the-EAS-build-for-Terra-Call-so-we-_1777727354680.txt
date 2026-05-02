@@ -1,0 +1,75 @@
+It's time to set up the EAS build for Terra Call so we can 
+submit to the App Store and Google Play.
+
+We will be using an existing Apple Developer account for iOS.
+
+Please do the following:
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 1 — EAS SETUP
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. Install EAS CLI if not already installed
+2. Configure eas.json with build profiles for:
+   - development
+   - preview (internal testing)
+   - production (App Store / Google Play)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 2 — APP CONFIGURATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Update app.json / app.config.js with:
+- Name: Terra Call
+- Slug: terra-call
+- iOS bundle identifier: com.terracall.app
+- Android package: com.terracall.app
+- Version: 1.0.0
+- Build number: 1
+- App icon: use the existing Terra Call icon assets
+- Splash screen: use existing branded splash screen
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 3 — iOS BUILD
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Configure for iOS build using an existing Apple Developer 
+account. We will handle Apple credentials manually.
+
+Set up:
+- Provisioning profile
+- Distribution certificate
+- App Store Connect API key (if needed)
+
+Build target: TestFlight first for internal testing, 
+then production for App Store submission.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 4 — ANDROID BUILD
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Configure for Android build:
+- Generate keystore for signing
+- Store keystore credentials in Replit Secrets
+- Build target: Internal testing track on Google Play first,
+  then production
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 5 — PERMISSIONS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Make sure the following permissions are declared:
+- Camera access (for emergency video)
+- Microphone access (for video calls)
+- Push notifications
+- Location access
+- Background app refresh (for check-in monitoring)
+
+For iOS — add proper usage description strings for each 
+permission in plain English explaining why Terra Call 
+needs them.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+IMPORTANT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- Do NOT touch any existing app functionality
+- Walk me through each step before executing
+- Flag anything that requires my Apple Developer 
+  account credentials so I can provide them
+- Confirm when each step is complete before 
+  moving to the next
