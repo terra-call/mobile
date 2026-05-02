@@ -20,13 +20,20 @@
       "infoPlist": {
         "NSCameraUsageDescription": "Terra Call uses your camera so a trusted caregiver can see you during an emergency check-in. The camera only activates after you give consent and only when a caregiver initiates an emergency call.",
         "NSMicrophoneUsageDescription": "Terra Call uses your microphone during emergency video check-ins so you can talk with your caregiver.",
-        "NSLocationWhenInUseUsageDescription": "Terra Call shares your location with your caregiver during emergency check-ins so they can find you quickly."
+        "NSLocationWhenInUseUsageDescription": "Terra Call shares your location with your caregiver during emergency check-ins so they can find you quickly.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
       "package": "com.terracall.mobile",
       "versionCode": 1,
       "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.POST_NOTIFICATIONS",
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS",
@@ -78,6 +85,12 @@
         "projectId": "715d9c4f-6a1b-407b-8b3a-e2a43d458682"
       }
     },
-    "owner": "terracall"
+    "owner": "terracall",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/715d9c4f-6a1b-407b-8b3a-e2a43d458682"
+    }
   }
 }
