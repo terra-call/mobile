@@ -72,6 +72,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "715d9c4f-6a1b-407b-8b3a-e2a43d458682"
+      }
+    },
+    "owner": "terracall"
   }
 }
