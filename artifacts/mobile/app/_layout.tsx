@@ -19,6 +19,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { CareDataProvider } from "@/contexts/CareDataContext";
 import { STORAGE_KEYS } from "@/constants/storage";
+import { logAudit } from "@/services/audit";
 import { registerForPushNotifications } from "@/services/notifications";
 
 const ONBOARDING_KEY = STORAGE_KEYS.ONBOARDING_SEEN;
@@ -76,7 +77,19 @@ function NotificationInitializer() {
 // Listens for camera_activate push notifications. When the care-receiver's
 // device receives one (either while app is foregrounded, or when the user
 // taps the notification), navigate them into the camera-publish screen.
+//
+// EMERGENCY CALL FLOW (Prompt 2 / Task 1) — every receipt of a
+// camera_activate push is audit-logged so the admin Care Reports tab can
+// see exactly when the receiver's device was woken up and what room it
+// was directed into. The roomName acts as the cross-device correlator
+// against the caregiver's `events` doc + audit rows.
 function CameraActivationListener() {
+  const { user } = useAuth();
+  const userIdRef = useRef<string | null>(user?.id ?? null);
+  useEffect(() => {
+    userIdRef.current = user?.id ?? null;
+  }, [user?.id]);
+
   useEffect(() => {
     if (Platform.OS === "web") return;
 
@@ -85,6 +98,18 @@ function CameraActivationListener() {
         | { type?: string; roomName?: string; caregiverName?: string }
         | undefined;
       if (data?.type !== "camera_activate" || !data.roomName) return;
+
+      // AUDIT — record receipt on the receiver's device. Use the userId
+      // ref so a logout/login mid-call doesn't write to the wrong uid.
+      const uid = userIdRef.current;
+      if (uid) {
+        logAudit({
+          userId: uid,
+          action: "camera_activation_received",
+          details: `Care-receiver device received camera_activate push (room=${data.roomName}, from=${data.caregiverName ?? "?"})`,
+        });
+      }
+
       router.push({
         pathname: "/camera-stream",
         params: {

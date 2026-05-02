@@ -17,6 +17,7 @@
     "drizzle-orm": "catalog:",
     "express": "^5",
     "firebase": "^12.11.0",
+    "firebase-admin": "^13.8.0",
     "pino": "^9",
     "pino-http": "^10",
     "twilio": "^5.13.1"

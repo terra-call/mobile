@@ -34,7 +34,18 @@ export type AuditAction =
   | "user_updated"
   | "care_report_generated"
   | "care_report_exported"
-  | "video_token_error";
+  | "video_token_error"
+  // Emergency call flow (Prompt 2)
+  | "emergency_call_initiated"
+  | "emergency_call_dismissed"
+  | "emergency_call_resolved"
+  | "video_token_minted"
+  | "camera_consent_checked"
+  | "camera_activation_push_sent"
+  | "camera_activation_received"
+  | "camera_activation_failed"
+  | "video_stream_connected"
+  | "unauthorized_token_request";
 
 export interface LogAuditParams {
   userId: string;

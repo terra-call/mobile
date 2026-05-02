@@ -175,6 +175,17 @@ export async function requestVideoToken(input: {
       audit(`Token mint returned malformed response (room=${roomName})`);
       return { ok: false, code: "server_error", message: VIDEO_TOKEN_ERROR_MESSAGE };
     }
+    // Success — write a HIPAA-grade audit row for the mint event so the
+    // admin Audit Log tab can correlate it against the parallel `events`
+    // doc that emergency-call.tsx wrote on the caregiver's tap.
+    if (auditUserId) {
+      logAudit({
+        userId: auditUserId,
+        action: "video_token_minted",
+        details: `Twilio Video token minted (identity=${data.identity}, room=${roomName}, ttl=${data.ttlSeconds}s)`,
+        targetUserId: data.identity !== auditUserId ? data.identity : undefined,
+      });
+    }
     return {
       ok: true,
       token: data.token,

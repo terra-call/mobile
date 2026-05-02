@@ -24,6 +24,10 @@ import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from "
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { logAudit } from "@/services/audit";
 import { useAuth } from "@/contexts/AuthContext";
+import {
+  markEmergencyEventResolved,
+  markEmergencyEventVideoConnected,
+} from "@/services/emergencyEventLog";
 import { requestVideoToken, VIDEO_TOKEN_ERROR_MESSAGE } from "@/services/video";
 
 type Mode = "publish" | "view";
@@ -34,6 +38,8 @@ export default function CameraStreamScreen() {
     roomName?: string;
     receiverName?: string;
     caregiverName?: string;
+    receiverId?: string;
+    eventId?: string;
   }>();
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === "web" ? 67 : insets.top;
@@ -42,6 +48,13 @@ export default function CameraStreamScreen() {
 
   const mode: Mode = params.mode === "publish" ? "publish" : "view";
   const roomName = params.roomName ?? "";
+  // EMERGENCY CALL FLOW — eventId is passed by emergency-call.tsx so the
+  // events lifecycle row created caregiver-side is the same row patched
+  // here on connect/resolve. Empty string means no row to patch (e.g. a
+  // direct deep-link into camera-stream, which shouldn't happen in normal
+  // operation but we tolerate it gracefully).
+  const eventId = params.eventId && params.eventId.length > 0 ? params.eventId : null;
+  const receiverId = params.receiverId ?? null;
   const otherPartyName =
     mode === "publish"
       ? params.caregiverName ?? "Your caregiver"
@@ -91,8 +104,21 @@ export default function CameraStreamScreen() {
       if (cancelled) return;
 
       if (!result.ok) {
-        // Failure is already audited inside requestVideoToken. Show the
-        // approved plain-English message — never the underlying code/HTTP.
+        // Failure is already audited inside requestVideoToken (as
+        // video_token_error). For the publish-side (care-receiver), this
+        // ALSO means the camera could not activate — emit the dedicated
+        // camera_activation_failed audit so the admin Care Reports tab
+        // can correlate the receiver-side failure to the same room.
+        if (mode === "publish" && user?.id) {
+          logAudit({
+            userId: user.id,
+            action: "camera_activation_failed",
+            details: `Receiver-side token mint failed (${result.code}) — camera cannot publish to room ${roomName}`,
+          });
+        }
+        // Show the approved plain-English message — never the underlying
+        // code/HTTP. For the caregiver (mode=view) this is the same
+        // "Camera unavailable / call 911" surface.
         setTokenError(result.message);
         setConnecting(false);
         return;
@@ -104,6 +130,22 @@ export default function CameraStreamScreen() {
       //   videoRef.current.connect({ accessToken: accessTokenRef.current, roomName });
       accessTokenRef.current = result.token;
       setConnecting(false);
+
+      // EMERGENCY CALL FLOW — both sides have a valid token in hand and
+      // are about to (or just did) join the room. Audit-log the connection
+      // and, on the caregiver side, patch the events lifecycle row.
+      if (user?.id) {
+        logAudit({
+          userId: user.id,
+          action: "video_stream_connected",
+          details: `${mode === "publish" ? "Care-receiver" : "Caregiver"} connected to Twilio Video room ${roomName}`,
+          targetUserId: receiverId ?? undefined,
+        });
+      }
+      if (mode === "view") {
+        // Only the caregiver patches the events doc — they own it.
+        markEmergencyEventVideoConnected(eventId);
+      }
     })();
 
     return () => {
@@ -114,6 +156,22 @@ export default function CameraStreamScreen() {
   const endStream = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     // TWILIO VIDEO — Phase 2: videoRef.current.disconnect();
+
+    // EMERGENCY CALL FLOW — close out the lifecycle. Only the caregiver
+    // (mode=view) owns the events doc, so only they patch it here. Both
+    // sides write the audit log so we have a record from each device.
+    if (user?.id) {
+      logAudit({
+        userId: user.id,
+        action: "emergency_call_resolved",
+        details: `${mode === "publish" ? "Care-receiver" : "Caregiver"} ended the live stream (room=${roomName})`,
+        targetUserId: receiverId ?? undefined,
+      });
+    }
+    if (mode === "view") {
+      markEmergencyEventResolved(eventId);
+    }
+
     router.back();
   };
 

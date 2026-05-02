@@ -5,6 +5,12 @@ import React, { useEffect, useRef, useState } from "react";
 import { Alert, Animated, Linking, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useAuth } from "@/contexts/AuthContext";
+import { logAudit } from "@/services/audit";
+import {
+  createEmergencyEvent,
+  markEmergencyEventDismissed,
+  markEmergencyEventUnanswered,
+} from "@/services/emergencyEventLog";
 import {
   buildVideoRoomName,
   getCameraConsent,
@@ -38,6 +44,14 @@ export default function EmergencyCallScreen() {
   const [secondsRemaining, setSecondsRemaining] = useState(15);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const activationStartedRef = useRef(false);
+  // EMERGENCY CALL FLOW — events doc id from createEmergencyEvent. We carry
+  // it through the lifecycle so each subsequent state change patches the
+  // SAME row instead of writing a new one.
+  const eventIdRef = useRef<string | null>(null);
+  const roomNameRef = useRef<string | null>(null);
+  // True once the call reaches a terminal state (resolved/dismissed) so we
+  // don't double-log dismissal on unmount after a successful resolve.
+  const lifecycleClosedRef = useRef(false);
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
   const bottomPad = Platform.OS === "web" ? 34 : insets.bottom;
@@ -125,8 +139,27 @@ export default function EmergencyCallScreen() {
       getReceiverPushToken(receiverId),
     ]);
 
+    // AUDIT — record what the receiver's stored consent flag was at the
+    // moment the 15s timer expired. This is HIPAA-relevant because the flag
+    // governs whether the caregiver was permitted to activate the camera.
+    if (user?.id) {
+      logAudit({
+        userId: user.id,
+        action: "camera_consent_checked",
+        details: `Camera consent for ${receiverName ?? "receiver"} = "${consent}" at unanswered-call escalation`,
+        targetUserId: receiverId,
+      });
+    }
+
     if (consent !== "granted") {
       setCallState("no_consent");
+      // EVENTS — close out the lifecycle row: timer hit zero, no activation
+      // happened because consent wasn't granted.
+      markEmergencyEventUnanswered(eventIdRef.current, {
+        cameraActivated: false,
+        consentStatus: consent,
+      });
+      lifecycleClosedRef.current = true;
       return;
     }
 
@@ -135,11 +168,27 @@ export default function EmergencyCallScreen() {
         "Cannot reach device",
         `${receiverName ?? "The care receiver"} has consented to camera activation, but their device hasn't registered for push notifications yet. Ask them to open the app and enable notifications.`
       );
+      // AUDIT — failed before we even tried to send the push.
+      if (user?.id) {
+        logAudit({
+          userId: user.id,
+          action: "camera_activation_failed",
+          details: `Receiver ${receiverName ?? receiverId} has no Expo push token registered`,
+          targetUserId: receiverId,
+        });
+      }
+      markEmergencyEventUnanswered(eventIdRef.current, {
+        cameraActivated: false,
+        consentStatus: consent,
+      });
+      lifecycleClosedRef.current = true;
       setCallState("idle");
       return;
     }
 
-    const roomName = buildVideoRoomName(receiverId);
+    const roomName = roomNameRef.current ?? buildVideoRoomName(receiverId);
+    roomNameRef.current = roomName;
+
     const result = await initiateCameraActivation({
       receiverPushToken: pushToken,
       receiverName: receiverName ?? "Care receiver",
@@ -149,23 +198,56 @@ export default function EmergencyCallScreen() {
 
     if (!result.ok) {
       Alert.alert(
-        "Camera activation failed",
+        "Camera unavailable",
         result.error ??
           "We couldn't reach the camera-activation service. Try again or call 911 if this is an emergency."
       );
+      // AUDIT — server refused or push dispatch failed.
+      if (user?.id) {
+        logAudit({
+          userId: user.id,
+          action: "camera_activation_failed",
+          details: `Camera activation push failed: ${result.error ?? "unknown error"} (room=${roomName})`,
+          targetUserId: receiverId,
+        });
+      }
+      markEmergencyEventUnanswered(eventIdRef.current, {
+        cameraActivated: false,
+        consentStatus: consent,
+      });
+      lifecycleClosedRef.current = true;
       setCallState("idle");
       activationStartedRef.current = false;
       return;
     }
 
-    // Push has been sent to the receiver's device; navigate the caregiver
-    // into the live-stream viewer screen joining the same Twilio Video room.
+    // AUDIT + EVENTS — push successfully dispatched to receiver.
+    if (user?.id) {
+      logAudit({
+        userId: user.id,
+        action: "camera_activation_push_sent",
+        details: `Camera activation push dispatched to ${receiverName ?? receiverId} (room=${roomName})`,
+        targetUserId: receiverId,
+      });
+    }
+    markEmergencyEventUnanswered(eventIdRef.current, {
+      cameraActivated: true,
+      consentStatus: consent,
+    });
+    // The events doc isn't "closed" here — camera-stream.tsx will continue
+    // patching it through video_connected → resolved.
+
+    // Navigate the caregiver into the live-stream viewer screen joining the
+    // same Twilio Video room. Pass the eventId so camera-stream.tsx can
+    // patch the same Firestore row when video connects / is resolved.
     router.replace({
       pathname: "/camera-stream",
       params: {
         mode: "view",
         roomName,
         receiverName: receiverName ?? "Care receiver",
+        receiverId,
+        eventId: eventIdRef.current ?? "",
       },
     });
   };
@@ -203,6 +285,32 @@ export default function EmergencyCallScreen() {
       return;
     }
 
+    // EMERGENCY CALL FLOW — open the lifecycle:
+    //   1. AUDIT log "emergency_call_initiated"
+    //   2. Create the `events` collection row that subsequent state changes
+    //      will patch (unanswered → video_connected → resolved/dismissed).
+    // Both are fire-and-forget — they MUST NOT block the dialer or timer.
+    if (user?.id && receiverId) {
+      const roomName = buildVideoRoomName(receiverId);
+      roomNameRef.current = roomName;
+      lifecycleClosedRef.current = false;
+
+      logAudit({
+        userId: user.id,
+        action: "emergency_call_initiated",
+        details: `Caregiver tapped "Call Their Device" for ${receiverName ?? receiverId} (room=${roomName})`,
+        targetUserId: receiverId,
+      });
+
+      createEmergencyEvent({
+        caregiverId: user.id,
+        careReceiverId: receiverId,
+        roomName,
+      }).then((id) => {
+        eventIdRef.current = id;
+      });
+    }
+
     // Dialer opened successfully — only NOW start the 15s unanswered timer.
     activationStartedRef.current = false;
     startUnansweredTimer();
@@ -212,6 +320,19 @@ export default function EmergencyCallScreen() {
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
+    }
+    // EMERGENCY CALL FLOW — caregiver dismissed BEFORE the 15s timer
+    // elapsed. Patch the events doc + write an audit row so the trail
+    // shows the call ended cleanly without escalation.
+    if (!lifecycleClosedRef.current && eventIdRef.current && user?.id) {
+      logAudit({
+        userId: user.id,
+        action: "emergency_call_dismissed",
+        details: `Caregiver cancelled the unanswered-call timer before camera activation (room=${roomNameRef.current ?? "?"})`,
+        targetUserId: receiverId,
+      });
+      markEmergencyEventDismissed(eventIdRef.current);
+      lifecycleClosedRef.current = true;
     }
     activationStartedRef.current = false;
     setCallState("idle");
