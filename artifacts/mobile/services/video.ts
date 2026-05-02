@@ -13,8 +13,17 @@
 
 import { doc, getDoc } from "firebase/firestore";
 import { db, isFirebaseConfigured } from "./firebase";
+import { logAudit } from "./audit";
 
 const API_BASE = (process.env.EXPO_PUBLIC_API_URL ?? "").replace(/\/$/, "");
+
+/**
+ * Plain-English error shown to the caregiver when video token minting fails.
+ * Worded so a non-technical user knows the safe fallback (call 911) without
+ * leaking server details. Do not change wording without product approval.
+ */
+export const VIDEO_TOKEN_ERROR_MESSAGE =
+  "Video connection failed. Please call 911 if this is an emergency.";
 
 export type CameraConsent = "granted" | "denied" | "unset";
 
@@ -65,6 +74,111 @@ export async function initiateCameraActivation(input: {
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to start camera";
     return { ok: false, error: message };
+  }
+}
+
+// TWILIO VIDEO — token minting client
+// ─────────────────────────────────────────────────────────────────────────────
+export interface VideoTokenSuccess {
+  ok: true;
+  token: string;
+  roomName: string;
+  identity: string;
+  ttlSeconds: number;
+}
+
+export interface VideoTokenFailure {
+  ok: false;
+  /** Plain-English message safe to surface to the caregiver. */
+  message: string;
+  /** Machine-readable code for telemetry. */
+  code:
+    | "no_api_base"
+    | "video_not_configured"
+    | "bad_request"
+    | "server_error"
+    | "network_error";
+}
+
+export type VideoTokenResult = VideoTokenSuccess | VideoTokenFailure;
+
+/**
+ * Mint a short-lived Twilio Video access token for the requesting client.
+ * The same endpoint is used by both sides of an emergency video session:
+ *   • caregiver — joins the room as a subscriber/viewer
+ *   • care-receiver — joins the room as a publisher (front camera)
+ *
+ * On failure: writes an entry to the `auditLogs` collection (HIPAA trail) and
+ * returns a structured error so the UI can show VIDEO_TOKEN_ERROR_MESSAGE.
+ *
+ * @param identity   stable per-user identifier — caregiver uid or receiver uid
+ * @param roomName   deterministic emergency room name from buildVideoRoomName
+ * @param auditUserId  the uid to attribute the audit-log entry to (optional)
+ */
+export async function requestVideoToken(input: {
+  identity: string;
+  roomName: string;
+  auditUserId?: string;
+}): Promise<VideoTokenResult> {
+  const { identity, roomName, auditUserId } = input;
+
+  const audit = (details: string) => {
+    if (!auditUserId) return;
+    logAudit({
+      userId: auditUserId,
+      action: "video_token_error",
+      details,
+      targetUserId: identity !== auditUserId ? identity : undefined,
+    });
+  };
+
+  if (!API_BASE) {
+    audit(`Token request aborted — EXPO_PUBLIC_API_URL not configured (room=${roomName})`);
+    return { ok: false, code: "no_api_base", message: VIDEO_TOKEN_ERROR_MESSAGE };
+  }
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/api/video/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ identity, roomName }),
+    });
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : "network failure";
+    audit(`Token request network error: ${reason} (room=${roomName})`);
+    return { ok: false, code: "network_error", message: VIDEO_TOKEN_ERROR_MESSAGE };
+  }
+
+  if (res.status === 503) {
+    audit(`Token mint refused — Twilio Video not configured on server (room=${roomName})`);
+    return { ok: false, code: "video_not_configured", message: VIDEO_TOKEN_ERROR_MESSAGE };
+  }
+  if (res.status === 400) {
+    audit(`Token mint rejected — bad request (identity=${identity}, room=${roomName})`);
+    return { ok: false, code: "bad_request", message: VIDEO_TOKEN_ERROR_MESSAGE };
+  }
+  if (!res.ok) {
+    audit(`Token mint server error: HTTP ${res.status} (room=${roomName})`);
+    return { ok: false, code: "server_error", message: VIDEO_TOKEN_ERROR_MESSAGE };
+  }
+
+  try {
+    const data = (await res.json()) as Partial<VideoTokenSuccess>;
+    if (!data.token || !data.roomName || !data.identity || !data.ttlSeconds) {
+      audit(`Token mint returned malformed response (room=${roomName})`);
+      return { ok: false, code: "server_error", message: VIDEO_TOKEN_ERROR_MESSAGE };
+    }
+    return {
+      ok: true,
+      token: data.token,
+      roomName: data.roomName,
+      identity: data.identity,
+      ttlSeconds: data.ttlSeconds,
+    };
+  } catch {
+    audit(`Token mint response not JSON (room=${roomName})`);
+    return { ok: false, code: "server_error", message: VIDEO_TOKEN_ERROR_MESSAGE };
   }
 }
 

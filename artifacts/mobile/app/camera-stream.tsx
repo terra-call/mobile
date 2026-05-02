@@ -19,9 +19,12 @@
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { logAudit } from "@/services/audit";
+import { useAuth } from "@/contexts/AuthContext";
+import { requestVideoToken, VIDEO_TOKEN_ERROR_MESSAGE } from "@/services/video";
 
 type Mode = "publish" | "view";
 
@@ -35,6 +38,7 @@ export default function CameraStreamScreen() {
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === "web" ? 67 : insets.top;
   const bottomPad = Platform.OS === "web" ? 34 : insets.bottom;
+  const { user } = useAuth();
 
   const mode: Mode = params.mode === "publish" ? "publish" : "view";
   const roomName = params.roomName ?? "";
@@ -44,19 +48,68 @@ export default function CameraStreamScreen() {
       : params.receiverName ?? "Care receiver";
 
   const [connecting, setConnecting] = useState(true);
+  // TWILIO VIDEO — token minting state. The token itself is held in a ref
+  // (not state) so it is never accidentally serialized into render output or
+  // the React DevTools tree — JWTs are short-lived bearer credentials.
+  const accessTokenRef = useRef<string | null>(null);
+  const [tokenError, setTokenError] = useState<string | null>(null);
 
   useEffect(() => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
 
-    // TWILIO VIDEO — Phase 2 camera integration
-    // When the real SDK is wired up, replace this fake delay with:
-    //   const tokenRes = await callNotifyApi("/api/video/token", {
-    //     identity: user.id, roomName,
-    //   });
-    //   videoRef.current.connect({ accessToken: tokenRes.token, roomName });
-    const t = setTimeout(() => setConnecting(false), 1500);
-    return () => clearTimeout(t);
-  }, [roomName]);
+    let cancelled = false;
+    (async () => {
+      // No room name passed in — nothing to mint a token for. Surface the
+      // standard error so the caregiver knows to call 911 if needed, AND
+      // write an audit-log entry so the failure shows up in the HIPAA trail
+      // alongside the failures originating inside requestVideoToken.
+      if (!roomName) {
+        if (user?.id) {
+          logAudit({
+            userId: user.id,
+            action: "video_token_error",
+            details: `Token request aborted — camera-stream opened without a roomName (mode=${mode})`,
+          });
+        }
+        if (!cancelled) {
+          setTokenError(VIDEO_TOKEN_ERROR_MESSAGE);
+          setConnecting(false);
+        }
+        return;
+      }
+
+      // The same /api/video/token endpoint serves both sides — the caller's
+      // identity scopes the token to that user, and the room name scopes it
+      // to this single emergency session.
+      const identity = user?.id ?? `anon-${mode}`;
+      const result = await requestVideoToken({
+        identity,
+        roomName,
+        auditUserId: user?.id,
+      });
+
+      if (cancelled) return;
+
+      if (!result.ok) {
+        // Failure is already audited inside requestVideoToken. Show the
+        // approved plain-English message — never the underlying code/HTTP.
+        setTokenError(result.message);
+        setConnecting(false);
+        return;
+      }
+
+      // TWILIO VIDEO — Phase 2 camera integration
+      // The JWT is now ready. When @twilio/video-react-native-sdk is installed
+      // and a custom dev build is shipped, hand it off here:
+      //   videoRef.current.connect({ accessToken: accessTokenRef.current, roomName });
+      accessTokenRef.current = result.token;
+      setConnecting(false);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [roomName, mode, user?.id]);
 
   const endStream = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
@@ -74,7 +127,16 @@ export default function CameraStreamScreen() {
       )}
 
       <View style={styles.videoArea}>
-        {connecting ? (
+        {tokenError ? (
+          // TWILIO VIDEO — token minting failed. Show the approved plain-
+          // English message that points the caregiver to 911 as the safe
+          // fallback. The detailed reason is in the auditLogs collection.
+          <View style={styles.placeholder}>
+            <Feather name="alert-triangle" size={56} color="#FF3B30" />
+            <Text style={styles.errorTitle}>Video unavailable</Text>
+            <Text style={styles.errorSub}>{tokenError}</Text>
+          </View>
+        ) : connecting ? (
           <View style={styles.placeholder}>
             <ActivityIndicator size="large" color="#22FF6E" />
             <Text style={styles.placeholderTitle}>
@@ -143,6 +205,14 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   placeholder: { alignItems: "center", padding: 24, gap: 14 },
+  errorTitle: { color: "#FF3B30", fontSize: 22, fontWeight: "700", textAlign: "center" },
+  errorSub: {
+    color: "rgba(255,255,255,0.85)",
+    fontSize: 15,
+    textAlign: "center",
+    lineHeight: 22,
+    maxWidth: 320,
+  },
   placeholderTitle: { color: "#fff", fontSize: 22, fontWeight: "700", textAlign: "center" },
   placeholderSub: {
     color: "rgba(255,255,255,0.6)",

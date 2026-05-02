@@ -33,7 +33,8 @@ export type AuditAction =
   | "organization_updated"
   | "user_updated"
   | "care_report_generated"
-  | "care_report_exported";
+  | "care_report_exported"
+  | "video_token_error";
 
 export interface LogAuditParams {
   userId: string;
