@@ -1,25 +1,26 @@
-// TWILIO VIDEO — Phase 2 camera integration
+// TWILIO VIDEO — Phase 2 camera integration (LIVE)
 // ─────────────────────────────────────────────────────────────────────────────
 // Single-screen component used by both sides of an emergency video session:
 //   • mode=publish  → care-receiver, activates front camera and joins the room
 //   • mode=view     → caregiver, joins the room as a subscriber
 //
-// Until `@twilio/video-react-native-sdk` is installed (requires a custom EAS
-// dev build because the SDK ships native iOS/Android code that Expo Go does
-// not include) the screen renders a clear placeholder explaining what would
-// happen here and provides the "End Stream" button so the rest of the flow
-// can be tested. When you're ready to wire up real video:
-//   1. Add TWILIO_API_KEY_SID and TWILIO_API_KEY_SECRET to server secrets
-//   2. `pnpm --filter @workspace/mobile add @twilio/video-react-native-sdk`
-//   3. Run `eas build --profile development --platform ios` (or android)
-//   4. Replace the <Placeholder /> below with the SDK's <TwilioVideo /> view
-//      and call /api/video/token to fetch a JWT, then videoRef.connect(...)
+// The actual SDK (`@twilio/video-react-native-sdk`) is loaded through the
+// guarded wrapper at services/twilioVideo.ts so this file is safe to render
+// in Expo Go too — when the native module is missing we fall back to the
+// previous "needs a dev build" placeholder UI and audit-log the fact.
+//
+// To run real video end-to-end you need a custom EAS build:
+//   pnpm --filter @workspace/mobile exec eas build \
+//        --profile development --platform ios   (or android)
+// The plugin entry "@twilio/video-react-native-sdk" in app.json wires up
+// the native config (Info.plist / AndroidManifest) automatically during
+// `expo prebuild`.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { logAudit } from "@/services/audit";
@@ -29,8 +30,26 @@ import {
   markEmergencyEventVideoConnected,
 } from "@/services/emergencyEventLog";
 import { requestVideoToken, VIDEO_TOKEN_ERROR_MESSAGE } from "@/services/video";
+import {
+  TwilioVideo,
+  TwilioVideoLocalView,
+  TwilioVideoParticipantView,
+  isTwilioVideoAvailable,
+  twilioVideoLoadError,
+  type ParticipantEventCb,
+  type RoomErrorEventCb,
+  type RoomEventCb,
+  type TrackEventCb,
+  type TrackIdentifier,
+} from "@/services/twilioVideo";
 
 type Mode = "publish" | "view";
+
+interface RemoteVideoTrack {
+  participantSid: string;
+  videoTrackSid: string;
+  identity: string;
+}
 
 export default function CameraStreamScreen() {
   const params = useLocalSearchParams<{
@@ -61,21 +80,26 @@ export default function CameraStreamScreen() {
       : params.receiverName ?? "Care receiver";
 
   const [connecting, setConnecting] = useState(true);
-  // TWILIO VIDEO — token minting state. The token itself is held in a ref
-  // (not state) so it is never accidentally serialized into render output or
-  // the React DevTools tree — JWTs are short-lived bearer credentials.
-  const accessTokenRef = useRef<string | null>(null);
   const [tokenError, setTokenError] = useState<string | null>(null);
+  // TWILIO VIDEO — connection lifecycle. `roomConnected` flips true when
+  // the SDK's onRoomDidConnect fires; `remoteTracks` accumulates remote
+  // video tracks the caregiver subscribes to.
+  const [roomConnected, setRoomConnected] = useState(false);
+  const [remoteTracks, setRemoteTracks] = useState<RemoteVideoTrack[]>([]);
+  // The token is held in a ref (not state) so it is never accidentally
+  // serialized into render output or React DevTools — JWTs are short-lived
+  // bearer credentials.
+  const accessTokenRef = useRef<string | null>(null);
+  const twilioRef = useRef<InstanceType<NonNullable<typeof TwilioVideo>> | null>(null);
+  // Guard against double-disconnect (endStream + unmount cleanup).
+  const disconnectedRef = useRef(false);
 
+  // ── Token mint + audit lifecycle ────────────────────────────────────────
   useEffect(() => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
 
     let cancelled = false;
     (async () => {
-      // No room name passed in — nothing to mint a token for. Surface the
-      // standard error so the caregiver knows to call 911 if needed, AND
-      // write an audit-log entry so the failure shows up in the HIPAA trail
-      // alongside the failures originating inside requestVideoToken.
       if (!roomName) {
         if (user?.id) {
           logAudit({
@@ -127,11 +151,6 @@ export default function CameraStreamScreen() {
       if (cancelled) return;
 
       if (!result.ok) {
-        // Failure is already audited inside requestVideoToken (as
-        // video_token_error). For the publish-side (care-receiver), this
-        // ALSO means the camera could not activate — emit the dedicated
-        // camera_activation_failed audit so the admin Care Reports tab
-        // can correlate the receiver-side failure to the same room.
         if (mode === "publish" && user?.id) {
           logAudit({
             userId: user.id,
@@ -139,24 +158,89 @@ export default function CameraStreamScreen() {
             details: `Receiver-side token mint failed (${result.code}) — camera cannot publish to room ${roomName}`,
           });
         }
-        // Show the approved plain-English message — never the underlying
-        // code/HTTP. For the caregiver (mode=view) this is the same
-        // "Camera unavailable / call 911" surface.
         setTokenError(result.message);
         setConnecting(false);
         return;
       }
 
-      // TWILIO VIDEO — Phase 2 camera integration
-      // The JWT is now ready. When @twilio/video-react-native-sdk is installed
-      // and a custom dev build is shipped, hand it off here:
-      //   videoRef.current.connect({ accessToken: accessTokenRef.current, roomName });
       accessTokenRef.current = result.token;
-      setConnecting(false);
 
-      // EMERGENCY CALL FLOW — both sides have a valid token in hand and
-      // are about to (or just did) join the room. Audit-log the connection
-      // and, on the caregiver side, patch the events lifecycle row.
+      // ── REAL SDK CONNECT ────────────────────────────────────────────────
+      // If the native module is loaded (custom dev build), tell the
+      // imperative TwilioVideo component to join the room. The room
+      // event handlers below will flip `roomConnected` once the room
+      // ACK comes back. If the SDK is missing (Expo Go / web), the
+      // component renders the "needs a dev build" placeholder instead
+      // and we still mark connection ready so the audit/event lifecycle
+      // can proceed for end-to-end flow testing.
+      if (isTwilioVideoAvailable && twilioRef.current) {
+        try {
+          twilioRef.current.connect({
+            accessToken: result.token,
+            roomName,
+            enableAudio: true,
+            enableVideo: mode === "publish",
+            enableNetworkQualityReporting: true,
+          });
+          // Don't flip `connecting` to false yet — wait for onRoomDidConnect.
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : "twilio connect failed";
+          if (user?.id) {
+            logAudit({
+              userId: user.id,
+              action: "video_token_error",
+              details: `TwilioVideo.connect threw: ${reason} (room=${roomName})`,
+            });
+          }
+          setTokenError(VIDEO_TOKEN_ERROR_MESSAGE);
+          setConnecting(false);
+        }
+      } else {
+        // Expo Go / web fallback path — log the SDK absence and complete
+        // the audit/event lifecycle as before so the rest of the flow
+        // can still be exercised end-to-end without a dev build.
+        if (user?.id && !isTwilioVideoAvailable) {
+          logAudit({
+            userId: user.id,
+            action: "video_token_error",
+            details: `Twilio Video native module unavailable (${twilioVideoLoadError ?? "Expo Go or web"}) — falling back to placeholder (room=${roomName})`,
+          });
+        }
+        setConnecting(false);
+        if (user?.id) {
+          logAudit({
+            userId: user.id,
+            action: "video_stream_connected",
+            details: `${mode === "publish" ? "Care-receiver" : "Caregiver"} reached camera-stream room ${roomName} (placeholder mode — no native SDK)`,
+            targetUserId: receiverId ?? undefined,
+          });
+        }
+        if (mode === "view") {
+          markEmergencyEventVideoConnected(eventId);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      // Best-effort disconnect on unmount — in case the user backs out of
+      // the screen without pressing the explicit End Stream button.
+      if (isTwilioVideoAvailable && twilioRef.current && !disconnectedRef.current) {
+        try {
+          twilioRef.current.disconnect();
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomName, mode, user?.id]);
+
+  // ── SDK event handlers ──────────────────────────────────────────────────
+  const onRoomDidConnect: RoomEventCb = useMemo(
+    () => () => {
+      setRoomConnected(true);
+      setConnecting(false);
       if (user?.id) {
         logAudit({
           userId: user.id,
@@ -166,19 +250,106 @@ export default function CameraStreamScreen() {
         });
       }
       if (mode === "view") {
-        // Only the caregiver patches the events doc — they own it.
         markEmergencyEventVideoConnected(eventId);
       }
-    })();
+    },
+    [user?.id, mode, roomName, receiverId, eventId],
+  );
 
-    return () => {
-      cancelled = true;
-    };
-  }, [roomName, mode, user?.id]);
+  const onRoomDidFailToConnect: RoomErrorEventCb = useMemo(
+    () => (event) => {
+      const reason =
+        typeof event.error === "string"
+          ? event.error
+          : event.error?.message ?? "unknown room error";
+      if (user?.id) {
+        logAudit({
+          userId: user.id,
+          action: "video_token_error",
+          details: `Twilio room connect failed: ${reason} (room=${roomName})`,
+        });
+      }
+      setTokenError(VIDEO_TOKEN_ERROR_MESSAGE);
+      setConnecting(false);
+    },
+    [user?.id, roomName],
+  );
 
+  // DISCONNECT — distinct from connect-failure. A disconnect can be either
+  // (a) the user pressed End Stream (expected, no error UI), or (b) the
+  // SDK lost the room mid-call (unexpected, but still NOT a token mint
+  // failure — recording it as `video_token_error` would corrupt the audit
+  // trail). We only flip back to a "not connected" state and let the
+  // existing endStream / unmount paths handle the rest.
+  const onRoomDidDisconnect: RoomErrorEventCb = useMemo(
+    () => (event) => {
+      setRoomConnected(false);
+      setRemoteTracks([]);
+      const errMsg =
+        typeof event.error === "string"
+          ? event.error
+          : event.error?.message ?? null;
+      // Errored disconnect (network drop, server kick, etc.) — note it,
+      // but do NOT mark the screen as a token error.
+      if (errMsg && user?.id) {
+        logAudit({
+          userId: user.id,
+          action: "video_stream_connected",
+          details: `Twilio room disconnected with error: ${errMsg} (room=${roomName})`,
+          targetUserId: receiverId ?? undefined,
+        });
+      }
+    },
+    [user?.id, roomName, receiverId],
+  );
+
+  const onParticipantAddedVideoTrack: TrackEventCb = useMemo(
+    () => ({ participant, track }) => {
+      // Caregiver (mode=view) subscribes to remote video tracks. The
+      // publish side can ignore — we don't need to render the receiver's
+      // own remote view.
+      if (mode !== "view") return;
+      setRemoteTracks((prev) => {
+        if (prev.some((t) => t.videoTrackSid === track.trackSid)) return prev;
+        return [
+          ...prev,
+          {
+            participantSid: participant.sid,
+            videoTrackSid: track.trackSid,
+            identity: participant.identity,
+          },
+        ];
+      });
+    },
+    [mode],
+  );
+
+  const onParticipantRemovedVideoTrack: TrackEventCb = useMemo(
+    () => ({ track }) => {
+      setRemoteTracks((prev) => prev.filter((t) => t.videoTrackSid !== track.trackSid));
+    },
+    [],
+  );
+
+  const onRoomParticipantDidDisconnect: ParticipantEventCb = useMemo(
+    () => ({ participant }) => {
+      setRemoteTracks((prev) => prev.filter((t) => t.participantSid !== participant.sid));
+    },
+    [],
+  );
+
+  // ── End / disconnect ────────────────────────────────────────────────────
   const endStream = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
-    // TWILIO VIDEO — Phase 2: videoRef.current.disconnect();
+
+    if (isTwilioVideoAvailable && twilioRef.current && !disconnectedRef.current) {
+      try {
+        twilioRef.current.disconnect();
+      } catch {
+        /* ignore */
+      }
+    }
+    disconnectedRef.current = true;
 
     // EMERGENCY CALL FLOW — close out the lifecycle. Only the caregiver
     // (mode=view) owns the events doc, so only they patch it here. Both
@@ -198,6 +369,13 @@ export default function CameraStreamScreen() {
     router.back();
   };
 
+  // ── Render ──────────────────────────────────────────────────────────────
+  const showRealVideo =
+    isTwilioVideoAvailable &&
+    !!TwilioVideo &&
+    !!TwilioVideoLocalView &&
+    !!TwilioVideoParticipantView;
+
   return (
     <View style={[styles.root, { paddingTop: topPad + 16, paddingBottom: bottomPad + 16 }]}>
       {mode === "publish" && (
@@ -208,10 +386,23 @@ export default function CameraStreamScreen() {
       )}
 
       <View style={styles.videoArea}>
+        {/* Imperative TwilioVideo controller — it has no visible UI but it
+            owns the room/connection. Mount it whenever the native SDK is
+            available so the connect() call in the effect can target it. */}
+        {showRealVideo && TwilioVideo && (
+          <TwilioVideo
+            ref={twilioRef}
+            onRoomDidConnect={onRoomDidConnect}
+            onRoomDidFailToConnect={onRoomDidFailToConnect}
+            onRoomDidDisconnect={onRoomDidDisconnect}
+            onParticipantAddedVideoTrack={onParticipantAddedVideoTrack}
+            onParticipantRemovedVideoTrack={onParticipantRemovedVideoTrack}
+            onRoomParticipantDidDisconnect={onRoomParticipantDidDisconnect}
+            style={styles.twilioController}
+          />
+        )}
+
         {tokenError ? (
-          // TWILIO VIDEO — token minting failed. Show the approved plain-
-          // English message that points the caregiver to 911 as the safe
-          // fallback. The detailed reason is in the auditLogs collection.
           <View style={styles.placeholder}>
             <Feather name="alert-triangle" size={56} color="#FF3B30" />
             <Text style={styles.errorTitle}>Video unavailable</Text>
@@ -225,7 +416,35 @@ export default function CameraStreamScreen() {
             </Text>
             <Text style={styles.placeholderSub}>Joining room {roomName.slice(-6) || "—"}</Text>
           </View>
+        ) : showRealVideo && roomConnected ? (
+          // Real Twilio video rendering. Care-receiver sees their own
+          // front camera; caregiver sees the receiver's remote track.
+          mode === "publish" && TwilioVideoLocalView ? (
+            <TwilioVideoLocalView enabled={true} style={styles.videoView} scaleType="fill" />
+          ) : remoteTracks.length > 0 && TwilioVideoParticipantView ? (
+            <TwilioVideoParticipantView
+              trackIdentifier={
+                {
+                  participantSid: remoteTracks[0].participantSid,
+                  videoTrackSid: remoteTracks[0].videoTrackSid,
+                } satisfies TrackIdentifier
+              }
+              style={styles.videoView}
+              scaleType="fill"
+            />
+          ) : (
+            <View style={styles.placeholder}>
+              <ActivityIndicator size="large" color="#22FF6E" />
+              <Text style={styles.placeholderTitle}>Waiting for {otherPartyName}…</Text>
+              <Text style={styles.placeholderSub}>
+                Connected to room — waiting for the other side to join.
+              </Text>
+            </View>
+          )
         ) : (
+          // Expo Go / web fallback — placeholder explaining the dev-build
+          // requirement. End-to-end flow (token mint, audit log, events
+          // doc updates) still works in this mode for development testing.
           <View style={styles.placeholder}>
             <Feather
               name={mode === "publish" ? "camera" : "video"}
@@ -237,11 +456,11 @@ export default function CameraStreamScreen() {
             </Text>
             <Text style={styles.placeholderSub}>
               {mode === "publish"
-                ? "Your camera will broadcast to your caregiver once a Twilio Video build is installed."
-                : `${otherPartyName}'s front camera will appear here once a Twilio Video build is installed.`}
+                ? "Your camera will broadcast to your caregiver in a custom dev build."
+                : `${otherPartyName}'s front camera will appear here in a custom dev build.`}
             </Text>
             <Text style={styles.placeholderHint}>
-              Phase 2 — install @twilio/video-react-native-sdk and ship a dev build
+              Run an EAS dev build to enable real Twilio Video here
             </Text>
           </View>
         )}
@@ -285,6 +504,10 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
+  // The imperative <TwilioVideo /> component has no visible UI but RN still
+  // expects a layout. Pin it to a 0×0 box so it doesn't occupy space.
+  twilioController: { position: "absolute", width: 0, height: 0, opacity: 0 },
+  videoView: { flex: 1, width: "100%", height: "100%" },
   placeholder: { alignItems: "center", padding: 24, gap: 14 },
   errorTitle: { color: "#FF3B30", fontSize: 22, fontWeight: "700", textAlign: "center" },
   errorSub: {

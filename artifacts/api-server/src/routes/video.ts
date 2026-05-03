@@ -23,6 +23,7 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import twilio from "twilio";
 import { logger } from "../lib/logger";
 import {
+  fetchUserDocAsCaller,
   isPermittedForReceiver,
   verifyFirebaseIdToken,
 } from "../middlewares/firebaseAuth";
@@ -157,29 +158,107 @@ router.post(
 
 /**
  * POST /api/video/initiate
- * Body: { receiverPushToken: string, receiverName: string, caregiverName: string, roomName: string }
- * Notifies the care-receiver's device via push notification to activate
- * the front camera and join the named Twilio Video room.
  *
- * SECURITY NOTE — Phase 2 follow-up:
- * This endpoint is currently unauthenticated. Before going to production it
- * MUST be hardened with: (a) Firebase ID-token verification of the caller,
- * (b) Firestore lookup confirming the caller is a permitted caregiver of
- * the receiver, and (c) a server-side re-check of the receiver's stored
- * cameraConsent flag. The client-side checks today are convenience-only and
- * could be bypassed by anyone who can reach the server.
+ * SECURITY — Firebase ID token auth on video endpoint
+ * Required before App Store submission
+ * Prevents unauthorized push-notification dispatch (would otherwise let any
+ * unauth'd caller spam care-receivers with "your camera is being activated"
+ * pushes — a serious abuse vector and HIPAA red flag).
+ *
+ * Headers: `Authorization: Bearer <Firebase ID token>`  (REQUIRED)
+ * Body:    { receiverPushToken, receiverName?, caregiverName?, roomName,
+ *            targetUserId }
+ *
+ * The caller's Firebase uid is verified, then matched against the receiver's
+ * `permittedCaregivers` array (via Firestore REST forwarding the caller's
+ * own ID token, so existing Security Rules govern read access). Same
+ * room-name / target-uid binding as /video/token to prevent cross-receiver
+ * confusion attacks.
  */
-router.post("/video/initiate", async (req: Request, res: Response) => {
+router.post(
+  "/video/initiate",
+  verifyFirebaseIdToken,
+  async (req: Request, res: Response) => {
   try {
-    const { receiverPushToken, receiverName, caregiverName, roomName } = req.body as {
-      receiverPushToken?: string;
-      receiverName?: string;
-      caregiverName?: string;
-      roomName?: string;
-    };
+    const { receiverName, caregiverName, roomName, targetUserId } =
+      req.body as {
+        // NOTE — receiverPushToken from the client body is INTENTIONALLY
+        // ignored. We resolve the token server-side from Firestore by
+        // targetUserId so a permitted caregiver cannot weaponize this
+        // endpoint to push "your camera is being activated" notifications
+        // to arbitrary device tokens.
+        receiverName?: string;
+        caregiverName?: string;
+        roomName?: string;
+        targetUserId?: string;
+      };
+    const auth = req.firebaseAuth!;
 
-    if (!receiverPushToken || !roomName) {
-      return res.status(400).json({ error: "receiverPushToken and roomName are required" });
+    if (!roomName || !targetUserId) {
+      return res
+        .status(400)
+        .json({ error: "roomName and targetUserId are required" });
+    }
+
+    // Defense-in-depth: room name must match deterministic format derived
+    // from targetUserId (mirrors /video/token guard).
+    if (!roomName.startsWith(`tc-emrg-${targetUserId.substring(0, 12)}-`)) {
+      logger.warn(
+        {
+          action: "unauthorized_token_request",
+          userId: auth.uid,
+          targetUserId,
+          roomName,
+          reason: "room_target_mismatch",
+          route: "/video/initiate",
+        },
+        "Initiate rejected — roomName does not match targetUserId",
+      );
+      return res.status(403).json({ error: "forbidden" });
+    }
+
+    // Permission: caller must be the receiver themselves OR a permitted
+    // caregiver. The receiver activating their OWN camera is a degenerate
+    // case but harmless — the push would just route to their own device.
+    const permitted = await isPermittedForReceiver(auth, targetUserId);
+    if (!permitted) {
+      logger.warn(
+        {
+          action: "unauthorized_token_request",
+          userId: auth.uid,
+          targetUserId,
+          roomName,
+          reason: "not_permitted_caregiver",
+          route: "/video/initiate",
+        },
+        "Initiate rejected — caller is not a permitted caregiver",
+      );
+      return res.status(403).json({ error: "forbidden" });
+    }
+
+    // PUSH-TARGET INTEGRITY — resolve the push token from Firestore for
+    // the verified targetUserId, NOT from the request body. Even though
+    // the caller is now an authenticated, permitted caregiver, allowing
+    // them to specify an arbitrary `receiverPushToken` would let them
+    // dispatch "camera is activating" pushes to any Expo device token —
+    // a serious abuse vector and the exact class of issue HIPAA reviewers
+    // flag. Read uses the caller's own ID token so existing Firestore
+    // Security Rules govern visibility.
+    const receiverDoc = await fetchUserDocAsCaller(auth.idToken, targetUserId);
+    const receiverPushToken =
+      (receiverDoc as { fields?: { expoPushToken?: { stringValue?: string } } } | null)
+        ?.fields?.expoPushToken?.stringValue ?? "";
+
+    if (!receiverPushToken) {
+      logger.warn(
+        { callerUid: auth.uid, targetUserId, roomName },
+        "Initiate rejected — no expoPushToken on file for receiver",
+      );
+      return res.status(409).json({
+        error: "no_push_token_on_file",
+        message:
+          "The care receiver hasn't registered a device for notifications yet.",
+      });
     }
 
     if (!receiverPushToken.startsWith("ExponentPushToken")) {
@@ -202,7 +281,7 @@ router.post("/video/initiate", async (req: Request, res: Response) => {
 
     if (!pushResult.delivered) {
       logger.warn(
-        { roomName, receiverName, validTokens: pushResult.validTokens },
+        { roomName, receiverName, targetUserId, callerUid: auth.uid, validTokens: pushResult.validTokens },
         "Camera activation push failed to dispatch"
       );
       return res.status(502).json({
@@ -211,7 +290,10 @@ router.post("/video/initiate", async (req: Request, res: Response) => {
       });
     }
 
-    logger.info({ roomName, receiverName, caregiverName }, "Camera activation push sent");
+    logger.info(
+      { roomName, receiverName, caregiverName, targetUserId, callerUid: auth.uid },
+      "Camera activation push sent (auth verified)",
+    );
 
     return res.json({
       ok: true,
@@ -223,6 +305,7 @@ router.post("/video/initiate", async (req: Request, res: Response) => {
     logger.error({ err }, "/api/video/initiate failed");
     return res.status(500).json({ error: "internal_error" });
   }
-});
+  },
+);
 
 export default router;

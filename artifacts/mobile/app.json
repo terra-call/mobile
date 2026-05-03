@@ -74,7 +74,8 @@
             "targetSdkVersion": 34
           }
         }
-      ]
+      ],
+      "@twilio/video-react-native-sdk"
     ],
     "experiments": {
       "typedRoutes": true,

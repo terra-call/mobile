@@ -60,20 +60,42 @@ export function buildVideoRoomName(receiverId: string): string {
  * Tell the server to push a "camera_activate" notification to the
  * care-receiver's device. The receiver's app picks this up via the
  * notification listener and navigates to the camera-publish screen.
+ *
+ * SECURITY — sends the caller's Firebase ID token in the Authorization
+ * header. The server verifies it, confirms the caller is a permitted
+ * caregiver of `targetUserId`, and only then dispatches the push.
  */
 export async function initiateCameraActivation(input: {
   receiverPushToken: string;
   receiverName: string;
   caregiverName: string;
   roomName: string;
+  /** uid of the care-receiver — used by the server for permission check. */
+  targetUserId: string;
 }): Promise<{ ok: boolean; videoConfigured?: boolean; error?: string }> {
   if (!API_BASE) return { ok: false, error: "API server URL not configured" };
+
+  let idToken: string;
+  try {
+    const currentUser = auth?.currentUser;
+    if (!currentUser) return { ok: false, error: "Not signed in" };
+    idToken = await currentUser.getIdToken();
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : "id-token refresh failed";
+    return { ok: false, error: reason };
+  }
+
   try {
     const res = await fetch(`${API_BASE}/api/video/initiate`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${idToken}`,
+      },
       body: JSON.stringify(input),
     });
+    if (res.status === 401) return { ok: false, error: "Not authorized" };
+    if (res.status === 403) return { ok: false, error: "Not permitted to activate this camera" };
     if (!res.ok) {
       return { ok: false, error: `Server returned ${res.status}` };
     }

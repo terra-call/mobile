@@ -194,6 +194,8 @@ export default function EmergencyCallScreen() {
       receiverName: receiverName ?? "Care receiver",
       caregiverName: user?.name ?? "Caregiver",
       roomName,
+      // Pass receiver uid so the server can verify caller has permission.
+      targetUserId: receiverId,
     });
 
     if (!result.ok) {
@@ -373,15 +375,44 @@ export default function EmergencyCallScreen() {
 
           {/* TWILIO VIDEO — Phase 2 camera integration: state banners */}
           {callState === "calling" && (
-            <View style={styles.timerBanner}>
-              <Feather name="phone-call" size={14} color="#22FF6E" />
-              <Text style={styles.timerText}>
-                Calling — activating camera in {secondsRemaining}s if no answer
-              </Text>
-              <Pressable onPress={cancelTimer} hitSlop={8}>
-                <Text style={styles.timerCancel}>Cancel</Text>
-              </Pressable>
-            </View>
+            <>
+              {/* Prominent countdown — large circular ring with the seconds
+                  remaining. Mirrors the audit/event lifecycle: when the
+                  number hits zero, attemptCameraActivation fires. The ring
+                  changes from green → amber → red as time runs out so the
+                  caregiver gets an unmistakable visual cue. */}
+              <View
+                style={[
+                  styles.countdownRing,
+                  secondsRemaining <= 5 && styles.countdownRingUrgent,
+                  secondsRemaining > 5 && secondsRemaining <= 10 && styles.countdownRingWarn,
+                ]}
+                accessibilityRole="timer"
+                accessibilityLabel={`Camera will activate in ${secondsRemaining} seconds`}
+                accessibilityLiveRegion="polite"
+              >
+                <Text
+                  style={[
+                    styles.countdownNumber,
+                    secondsRemaining <= 5 && styles.countdownNumberUrgent,
+                    secondsRemaining > 5 && secondsRemaining <= 10 && styles.countdownNumberWarn,
+                  ]}
+                >
+                  {secondsRemaining}
+                </Text>
+                <Text style={styles.countdownLabel}>SECONDS</Text>
+              </View>
+
+              <View style={styles.timerBanner}>
+                <Feather name="phone-call" size={14} color="#22FF6E" />
+                <Text style={styles.timerText}>
+                  Calling — activating camera if no answer
+                </Text>
+                <Pressable onPress={cancelTimer} hitSlop={8}>
+                  <Text style={styles.timerCancel}>Cancel</Text>
+                </Pressable>
+              </View>
+            </>
           )}
           {callState === "activating" && (
             <View style={styles.timerBanner}>
@@ -472,6 +503,53 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
   receiverStatus: { fontSize: 16, color: "#FF3B30", textAlign: "center" },
+  // Prominent countdown ring — tracks the 15s unanswered window. Default is
+  // the green Terra Call accent. countdownRingWarn (≤10s) shifts to amber,
+  // countdownRingUrgent (≤5s) shifts to the same red as CALL 911 so the
+  // caregiver instinctively understands time is almost up.
+  countdownRing: {
+    alignSelf: "center",
+    width: 132,
+    height: 132,
+    borderRadius: 66,
+    borderWidth: 4,
+    borderColor: "#22FF6E",
+    backgroundColor: "rgba(34, 255, 110, 0.06)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 12,
+    shadowColor: "#22FF6E",
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.55,
+    shadowRadius: 18,
+    elevation: 10,
+  },
+  countdownRingWarn: {
+    borderColor: "#FFB347",
+    backgroundColor: "rgba(255, 179, 71, 0.08)",
+    shadowColor: "#FFB347",
+  },
+  countdownRingUrgent: {
+    borderColor: "#FF3B30",
+    backgroundColor: "rgba(255, 59, 48, 0.1)",
+    shadowColor: "#FF3B30",
+  },
+  countdownNumber: {
+    fontSize: 56,
+    fontWeight: "900",
+    color: "#22FF6E",
+    lineHeight: 60,
+    fontVariant: ["tabular-nums"],
+  },
+  countdownNumberWarn: { color: "#FFB347" },
+  countdownNumberUrgent: { color: "#FF3B30" },
+  countdownLabel: {
+    fontSize: 9,
+    fontWeight: "700",
+    letterSpacing: 2,
+    color: "rgba(255,255,255,0.55)",
+    marginTop: 2,
+  },
   timerBanner: {
     flexDirection: "row",
     alignItems: "center",
