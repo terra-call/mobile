@@ -91,13 +91,36 @@ export default function CameraStreamScreen() {
         return;
       }
 
-      // The same /api/video/token endpoint serves both sides — the caller's
-      // identity scopes the token to that user, and the room name scopes it
-      // to this single emergency session.
+      // The same /api/video/token endpoint serves both sides. Identity is
+      // re-derived server-side from the verified Firebase uid; we send it
+      // here only for the local audit log. `targetUserId` is the room's
+      // care-receiver — for the publish side that's the signed-in user
+      // themselves, for the view side it's the receiverId param passed in
+      // from emergency-call.tsx. The server uses targetUserId to enforce
+      // the permittedCaregivers permission check.
       const identity = user?.id ?? `anon-${mode}`;
+      const targetUserId =
+        mode === "publish" ? (user?.id ?? "") : (receiverId ?? "");
+
+      if (!targetUserId) {
+        if (user?.id) {
+          logAudit({
+            userId: user.id,
+            action: "video_token_error",
+            details: `Token request aborted — missing targetUserId (mode=${mode}, room=${roomName})`,
+          });
+        }
+        if (!cancelled) {
+          setTokenError(VIDEO_TOKEN_ERROR_MESSAGE);
+          setConnecting(false);
+        }
+        return;
+      }
+
       const result = await requestVideoToken({
         identity,
         roomName,
+        targetUserId,
         auditUserId: user?.id,
       });
 

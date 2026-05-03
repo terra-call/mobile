@@ -12,13 +12,15 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 // TODO — PRE-SUBMISSION (HIGH):
-// 1. Auth the /api/video/token endpoint with Firebase
-//    ID token verification before App Store submission
+// 1. ✅ DONE — /api/video/token now requires a Firebase ID token in the
+//    Authorization header. Verified server-side via Google's public JWKS
+//    (jose library, no service-account credentials required). See
+//    artifacts/api-server/src/middlewares/firebaseAuth.ts.
 // 2. Install @twilio/video-react-native-sdk and test
 //    real room connections via EAS dev build
 
 import { doc, getDoc } from "firebase/firestore";
-import { db, isFirebaseConfigured } from "./firebase";
+import { auth, db, isFirebaseConfigured } from "./firebase";
 import { logAudit } from "./audit";
 
 const API_BASE = (process.env.EXPO_PUBLIC_API_URL ?? "").replace(/\/$/, "");
@@ -103,7 +105,9 @@ export interface VideoTokenFailure {
     | "video_not_configured"
     | "bad_request"
     | "server_error"
-    | "network_error";
+    | "network_error"
+    | "unauthorized"
+    | "forbidden";
 }
 
 export type VideoTokenResult = VideoTokenSuccess | VideoTokenFailure;
@@ -114,19 +118,29 @@ export type VideoTokenResult = VideoTokenSuccess | VideoTokenFailure;
  *   • caregiver — joins the room as a subscriber/viewer
  *   • care-receiver — joins the room as a publisher (front camera)
  *
+ * SECURITY — every request includes the caller's Firebase ID token in the
+ * Authorization header. The server verifies it cryptographically and uses
+ * the verified uid as the Twilio identity (the local `identity` arg is
+ * effectively ignored by the server — kept here only for the audit-log
+ * details until Twilio Video SDK integration removes it entirely).
+ *
  * On failure: writes an entry to the `auditLogs` collection (HIPAA trail) and
  * returns a structured error so the UI can show VIDEO_TOKEN_ERROR_MESSAGE.
  *
- * @param identity   stable per-user identifier — caregiver uid or receiver uid
- * @param roomName   deterministic emergency room name from buildVideoRoomName
- * @param auditUserId  the uid to attribute the audit-log entry to (optional)
+ * @param identity      stable per-user identifier — caregiver uid or receiver uid
+ * @param roomName      deterministic emergency room name from buildVideoRoomName
+ * @param targetUserId  uid of the OTHER party in the room (the care-receiver
+ *                      whose room this is). Used by the server for
+ *                      permittedCaregivers permission check.
+ * @param auditUserId   the uid to attribute the audit-log entry to (optional)
  */
 export async function requestVideoToken(input: {
   identity: string;
   roomName: string;
+  targetUserId: string;
   auditUserId?: string;
 }): Promise<VideoTokenResult> {
-  const { identity, roomName, auditUserId } = input;
+  const { identity, roomName, targetUserId, auditUserId } = input;
 
   const audit = (details: string) => {
     if (!auditUserId) return;
@@ -143,12 +157,33 @@ export async function requestVideoToken(input: {
     return { ok: false, code: "no_api_base", message: VIDEO_TOKEN_ERROR_MESSAGE };
   }
 
+  // SECURITY — fetch a fresh Firebase ID token. `getIdToken()` returns the
+  // cached token if it's still valid for >5 minutes, otherwise refreshes it
+  // automatically. Without a signed-in user we cannot mint a video token at
+  // all (server returns 401), so fail fast with the standard error UI.
+  let idToken: string;
+  try {
+    const currentUser = auth?.currentUser;
+    if (!currentUser) {
+      audit(`Token request aborted — no signed-in Firebase user (room=${roomName})`);
+      return { ok: false, code: "unauthorized", message: VIDEO_TOKEN_ERROR_MESSAGE };
+    }
+    idToken = await currentUser.getIdToken();
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : "id-token refresh failed";
+    audit(`Token request aborted — could not obtain Firebase ID token: ${reason} (room=${roomName})`);
+    return { ok: false, code: "unauthorized", message: VIDEO_TOKEN_ERROR_MESSAGE };
+  }
+
   let res: Response;
   try {
     res = await fetch(`${API_BASE}/api/video/token`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ identity, roomName }),
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${idToken}`,
+      },
+      body: JSON.stringify({ roomName, targetUserId }),
     });
   } catch (err) {
     const reason = err instanceof Error ? err.message : "network failure";
@@ -156,6 +191,14 @@ export async function requestVideoToken(input: {
     return { ok: false, code: "network_error", message: VIDEO_TOKEN_ERROR_MESSAGE };
   }
 
+  if (res.status === 401) {
+    audit(`Token mint refused — Firebase ID token rejected by server (room=${roomName})`);
+    return { ok: false, code: "unauthorized", message: VIDEO_TOKEN_ERROR_MESSAGE };
+  }
+  if (res.status === 403) {
+    audit(`Token mint refused — caller not permitted for room ${roomName} (target=${targetUserId})`);
+    return { ok: false, code: "forbidden", message: VIDEO_TOKEN_ERROR_MESSAGE };
+  }
   if (res.status === 503) {
     audit(`Token mint refused — Twilio Video not configured on server (room=${roomName})`);
     return { ok: false, code: "video_not_configured", message: VIDEO_TOKEN_ERROR_MESSAGE };

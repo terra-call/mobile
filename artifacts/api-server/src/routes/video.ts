@@ -22,6 +22,10 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import twilio from "twilio";
 import { logger } from "../lib/logger";
+import {
+  isPermittedForReceiver,
+  verifyFirebaseIdToken,
+} from "../middlewares/firebaseAuth";
 import { sendPush } from "../lib/notificationScheduler";
 
 const router: IRouter = Router();
@@ -38,49 +42,118 @@ function isVideoConfigured(): boolean {
 
 /**
  * POST /api/video/token
- * Body: { identity: string, roomName: string }
- * Mints a short-lived Twilio Video access token so the requesting client
- * can join the named room.
+ *
+ * SECURITY — Firebase ID token auth on video endpoint
+ * Required before App Store submission
+ * Prevents unauthorized token minting
+ *
+ * Headers: `Authorization: Bearer <Firebase ID token>`  (REQUIRED)
+ * Body:    { roomName: string, targetUserId: string }
+ *
+ * Identity is derived SERVER-SIDE from the verified Firebase uid — clients
+ * cannot supply or override it. Permission is checked against the
+ * `permittedCaregivers` array on the receiver's user doc via Firestore
+ * REST, forwarding the caller's own ID token so existing Security Rules
+ * enforce read access (no admin-credential bypass).
+ *
+ * Defense-in-depth: the requested `roomName` MUST be derived from
+ * `targetUserId` (matches the deterministic format
+ * `tc-emrg-<targetUserIdPrefix12>-<stamp>`) so a caller can't pass a
+ * receiver they're permitted for while actually requesting tokens for a
+ * different receiver's room.
  */
-router.post("/video/token", async (req: Request, res: Response) => {
-  const { identity, roomName } = req.body as { identity?: string; roomName?: string };
+router.post(
+  "/video/token",
+  verifyFirebaseIdToken,
+  async (req: Request, res: Response) => {
+    const { roomName, targetUserId } = req.body as {
+      roomName?: string;
+      targetUserId?: string;
+    };
+    const auth = req.firebaseAuth!;
 
-  if (!identity || !roomName) {
-    return res.status(400).json({ error: "identity and roomName are required" });
-  }
+    if (!roomName || !targetUserId) {
+      return res
+        .status(400)
+        .json({ error: "roomName and targetUserId are required" });
+    }
 
-  if (!isVideoConfigured()) {
-    return res.status(503).json({
-      error: "video_not_configured",
-      message:
-        "Twilio Video credentials are not configured on the server. Add TWILIO_API_KEY_SID and TWILIO_API_KEY_SECRET to enable.",
-    });
-  }
+    // Server-derived identity. Never trust a client-supplied identity field —
+    // the whole point of this middleware is to bind tokens to verified uids.
+    const identity = auth.uid;
 
-  try {
-    const AccessToken = twilio.jwt.AccessToken;
-    const VideoGrant = AccessToken.VideoGrant;
+    // Defense-in-depth: room name must match the deterministic format used
+    // by the mobile client's buildVideoRoomName(receiverId).
+    const expectedPrefix = `tc-emrg-${targetUserId.substring(0, 12)}-`;
+    if (!roomName.startsWith(expectedPrefix)) {
+      logger.warn(
+        {
+          action: "unauthorized_token_request",
+          userId: auth.uid,
+          targetUserId,
+          roomName,
+          reason: "room_target_mismatch",
+        },
+        "Token request rejected — roomName does not match targetUserId",
+      );
+      return res.status(403).json({ error: "forbidden" });
+    }
 
-    const token = new AccessToken(
-      process.env.TWILIO_ACCOUNT_SID!,
-      process.env.TWILIO_API_KEY_SID!,
-      process.env.TWILIO_API_KEY_SECRET!,
-      { identity, ttl: VIDEO_TOKEN_TTL_SECONDS }
-    );
-    token.addGrant(new VideoGrant({ room: roomName }));
+    // Permission: caller is the receiver themselves OR a permitted caregiver.
+    const permitted = await isPermittedForReceiver(auth, targetUserId);
+    if (!permitted) {
+      logger.warn(
+        {
+          action: "unauthorized_token_request",
+          userId: auth.uid,
+          targetUserId,
+          roomName,
+          reason: "not_permitted_caregiver",
+        },
+        "Token request rejected — caller is not the receiver nor a permitted caregiver",
+      );
+      return res.status(403).json({ error: "forbidden" });
+    }
 
-    logger.info({ identity, roomName }, "Twilio Video access token minted");
-    return res.json({
-      token: token.toJwt(),
-      roomName,
-      identity,
-      ttlSeconds: VIDEO_TOKEN_TTL_SECONDS,
-    });
-  } catch (err) {
-    logger.error({ err, identity, roomName }, "Failed to mint Twilio Video token");
-    return res.status(500).json({ error: "token_mint_failed" });
-  }
-});
+    if (!isVideoConfigured()) {
+      return res.status(503).json({
+        error: "video_not_configured",
+        message:
+          "Twilio Video credentials are not configured on the server. Add TWILIO_API_KEY_SID and TWILIO_API_KEY_SECRET to enable.",
+      });
+    }
+
+    try {
+      const AccessToken = twilio.jwt.AccessToken;
+      const VideoGrant = AccessToken.VideoGrant;
+
+      const token = new AccessToken(
+        process.env.TWILIO_ACCOUNT_SID!,
+        process.env.TWILIO_API_KEY_SID!,
+        process.env.TWILIO_API_KEY_SECRET!,
+        { identity, ttl: VIDEO_TOKEN_TTL_SECONDS },
+      );
+      token.addGrant(new VideoGrant({ room: roomName }));
+
+      logger.info(
+        { identity, roomName, targetUserId },
+        "Twilio Video access token minted (auth verified)",
+      );
+      return res.json({
+        token: token.toJwt(),
+        roomName,
+        identity,
+        ttlSeconds: VIDEO_TOKEN_TTL_SECONDS,
+      });
+    } catch (err) {
+      logger.error(
+        { err, identity, roomName },
+        "Failed to mint Twilio Video token",
+      );
+      return res.status(500).json({ error: "token_mint_failed" });
+    }
+  },
+);
 
 /**
  * POST /api/video/initiate
