@@ -60,6 +60,7 @@
   "dependencies": {
     "@twilio/video-react-native-sdk": "^3.5.0",
     "expo-build-properties": "^1.0.10",
+    "expo-dev-client": "^55.0.30",
     "expo-file-system": "^19.0.22",
     "expo-notifications": "~0.32.17",
     "expo-print": "^15.0.8",
