@@ -17,6 +17,7 @@ import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -40,6 +41,10 @@ import {
   type NotificationSettings,
   getCaregiverPhones,
   callNotifyApi,
+  getNotificationPermissionStatus,
+  requestNotificationPermissions,
+  registerForPushNotifications,
+  type NotifPermStatus,
 } from "@/services/notifications";
 
 interface PermittedCaregiver {
@@ -75,6 +80,10 @@ export default function SettingsScreen() {
   const [inviteCode, setInviteCode] = useState("");
   const [inviting, setInviting] = useState(false);
 
+  // Push notification permission
+  const [pushPermStatus, setPushPermStatus] = useState<NotifPermStatus>("undetermined");
+  const [pushRequesting, setPushRequesting] = useState(false);
+
   // Notification settings
   const [notifEnabled, setNotifEnabled] = useState(DEFAULT_NOTIFICATION_SETTINGS.enabled);
   const [scheduleType, setScheduleType] = useState<ScheduleType>(DEFAULT_NOTIFICATION_SETTINGS.schedule.type);
@@ -84,6 +93,42 @@ export default function SettingsScreen() {
   const [escalationWindow, setEscalationWindow] = useState(String(DEFAULT_NOTIFICATION_SETTINGS.escalationWindowMin));
   const [notifSaving, setNotifSaving] = useState(false);
   const [notifLoading, setNotifLoading] = useState(true);
+
+  // ── Check push notification permission on mount ────────────────────────────
+  useEffect(() => {
+    getNotificationPermissionStatus().then(setPushPermStatus);
+  }, []);
+
+  const handleEnablePush = async () => {
+    if (pushPermStatus === "denied") {
+      Alert.alert(
+        "Notifications Blocked",
+        "Push notifications were previously denied. Please open your device Settings, find Terra Call, and enable Notifications.",
+        [
+          { text: "OK" },
+          {
+            text: "Open Settings",
+            onPress: () => {
+              Linking.openSettings().catch(() => {});
+            },
+          },
+        ]
+      );
+      return;
+    }
+    setPushRequesting(true);
+    try {
+      const granted = await requestNotificationPermissions();
+      const newStatus = await getNotificationPermissionStatus();
+      setPushPermStatus(newStatus);
+      if (granted && user?.id) {
+        await registerForPushNotifications(user.id);
+        Alert.alert("Enabled", "Push notifications are now active. Your caregiver can reach your device for emergency alerts.");
+      }
+    } finally {
+      setPushRequesting(false);
+    }
+  };
 
   // ── Load permitted caregivers + notification settings ─────────────────────
   useEffect(() => {
@@ -471,6 +516,41 @@ export default function SettingsScreen() {
 
         {/* ── Notifications Section ── */}
         <Section title="NOTIFICATIONS" colors={colors}>
+          {/* Push notification permission — always visible */}
+          <View style={[styles.notifToggleRow, { backgroundColor: pushPermStatus === "granted" ? colors.card : "#1a0a0a", borderColor: pushPermStatus === "granted" ? colors.border : "#FF3B3044" }]}>
+            <View style={{ flex: 1, gap: 3 }}>
+              <Text style={[styles.notifToggleLabel, { color: colors.text }]}>
+                Push Notifications
+              </Text>
+              <Text style={[styles.notifToggleSub, { color: pushPermStatus === "granted" ? colors.primary : "#FF6B6B" }]}>
+                {pushPermStatus === "granted"
+                  ? "Enabled — your caregiver can reach this device"
+                  : pushPermStatus === "denied"
+                    ? "Blocked — tap to open Settings"
+                    : "Not enabled — required for emergency camera alerts"}
+              </Text>
+            </View>
+            {pushPermStatus === "granted" ? (
+              <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colors.primary + "22", alignItems: "center", justifyContent: "center" }}>
+                <Feather name="check" size={20} color={colors.primary} />
+              </View>
+            ) : (
+              <Pressable
+                onPress={handleEnablePush}
+                disabled={pushRequesting}
+                style={{ backgroundColor: "#FF3B30", paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10, opacity: pushRequesting ? 0.6 : 1 }}
+              >
+                {pushRequesting ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={{ color: "#fff", fontSize: 13, fontWeight: "700", fontFamily: "Inter_700Bold" }}>
+                    {pushPermStatus === "denied" ? "Settings" : "Enable"}
+                  </Text>
+                )}
+              </Pressable>
+            )}
+          </View>
+
           {notifLoading ? (
             <ActivityIndicator color={colors.primary} style={{ marginVertical: 12 }} />
           ) : (
