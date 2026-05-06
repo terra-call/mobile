@@ -156,7 +156,14 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
             const data = d.data();
             const missed = data.missedWindowMin ?? DEFAULT_MISSED_MIN;
             const escalation = data.escalationWindowMin ?? DEFAULT_ESCALATION_MIN;
-            const status = computeStatus(data.lastCheckIn, missed, escalation);
+            // A manually-stored "emergency" status (set by I'M NOT OK button)
+            // always wins over the time-based computation. Otherwise compute
+            // from lastCheckIn so a stale status doesn't get stuck.
+            const storedStatus = data.status as ReceiverStatus | undefined;
+            const status: ReceiverStatus =
+              storedStatus === "emergency"
+                ? "emergency"
+                : computeStatus(data.lastCheckIn, missed, escalation);
             const ts = data.lastCheckIn;
             let lastCheckInStr: string | null = null;
             if (ts) {
