@@ -83,6 +83,9 @@ export default function SettingsScreen() {
   // Push notification permission
   const [pushPermStatus, setPushPermStatus] = useState<NotifPermStatus>("undetermined");
   const [pushRequesting, setPushRequesting] = useState(false);
+  // Whether an Expo push token has actually been saved to Firestore.
+  // Permission granted ≠ token registered (e.g. FCM creds missing on Android).
+  const [pushTokenRegistered, setPushTokenRegistered] = useState(false);
 
   // SMS consent (HIPAA — caregiver SMS alerts include receiver's name)
   const [smsConsent, setSmsConsent] = useState(false);
@@ -125,8 +128,17 @@ export default function SettingsScreen() {
       const newStatus = await getNotificationPermissionStatus();
       setPushPermStatus(newStatus);
       if (granted && user?.id) {
-        await registerForPushNotifications(user.id);
-        Alert.alert("Enabled", "Push notifications are now active. Your caregiver can reach your device for emergency alerts.");
+        const result = await registerForPushNotifications(user.id);
+        if (result.token) {
+          setPushTokenRegistered(true);
+          Alert.alert("Enabled", "Push notifications are now active. Your caregiver can reach your device for emergency alerts.");
+        } else {
+          setPushTokenRegistered(false);
+          Alert.alert(
+            "Push Token Failed",
+            `Permission was granted, but registering with Expo's push service failed:\n\n${result.error ?? "Unknown error"}\n\nYour caregiver will not be able to wake your camera until this is fixed.`
+          );
+        }
       }
     } finally {
       setPushRequesting(false);
@@ -145,6 +157,7 @@ export default function SettingsScreen() {
         if (snap.exists()) {
           const data = snap.data();
           setCaregivers((data.permittedCaregivers as PermittedCaregiver[]) ?? []);
+          setPushTokenRegistered(Boolean(data.expoPushToken));
 
           // Load notification settings if they exist
           if (data.notificationsEnabled !== undefined) {
@@ -524,20 +537,31 @@ export default function SettingsScreen() {
         {/* ── Notifications Section ── */}
         <Section title="NOTIFICATIONS" colors={colors}>
           {/* Push notification permission — always visible */}
-          <View style={[styles.notifToggleRow, { backgroundColor: pushPermStatus === "granted" ? colors.card : "#1a0a0a", borderColor: pushPermStatus === "granted" ? colors.border : "#FF3B3044" }]}>
+          {(() => {
+            const fullyRegistered = pushPermStatus === "granted" && pushTokenRegistered;
+            const permOnly = pushPermStatus === "granted" && !pushTokenRegistered;
+            const bgColor = fullyRegistered ? colors.card : "#1a0a0a";
+            const borderColor = fullyRegistered ? colors.border : "#FF3B3044";
+            const subColor = fullyRegistered ? colors.primary : permOnly ? "#FFB020" : "#FF6B6B";
+            const subText = fullyRegistered
+              ? "Enabled — your caregiver can reach this device"
+              : permOnly
+                ? "Permission granted, but device not registered. Tap Retry."
+                : pushPermStatus === "denied"
+                  ? "Blocked — tap to open Settings"
+                  : "Not enabled — required for emergency camera alerts";
+            const buttonLabel = pushPermStatus === "denied" ? "Settings" : permOnly ? "Retry" : "Enable";
+            return (
+          <View style={[styles.notifToggleRow, { backgroundColor: bgColor, borderColor }]}>
             <View style={{ flex: 1, gap: 3 }}>
               <Text style={[styles.notifToggleLabel, { color: colors.text }]}>
                 Push Notifications
               </Text>
-              <Text style={[styles.notifToggleSub, { color: pushPermStatus === "granted" ? colors.primary : "#FF6B6B" }]}>
-                {pushPermStatus === "granted"
-                  ? "Enabled — your caregiver can reach this device"
-                  : pushPermStatus === "denied"
-                    ? "Blocked — tap to open Settings"
-                    : "Not enabled — required for emergency camera alerts"}
+              <Text style={[styles.notifToggleSub, { color: subColor }]}>
+                {subText}
               </Text>
             </View>
-            {pushPermStatus === "granted" ? (
+            {fullyRegistered ? (
               <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colors.primary + "22", alignItems: "center", justifyContent: "center" }}>
                 <Feather name="check" size={20} color={colors.primary} />
               </View>
@@ -551,12 +575,14 @@ export default function SettingsScreen() {
                   <ActivityIndicator size="small" color="#fff" />
                 ) : (
                   <Text style={{ color: "#fff", fontSize: 13, fontWeight: "700", fontFamily: "Inter_700Bold" }}>
-                    {pushPermStatus === "denied" ? "Settings" : "Enable"}
+                    {buttonLabel}
                   </Text>
                 )}
               </Pressable>
             )}
           </View>
+            );
+          })()}
 
           {notifLoading ? (
             <ActivityIndicator color={colors.primary} style={{ marginVertical: 12 }} />

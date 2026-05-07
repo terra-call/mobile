@@ -1,7 +1,20 @@
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
+import Constants from "expo-constants";
 import { doc, updateDoc } from "firebase/firestore";
 import { db, isFirebaseConfigured } from "./firebase";
+
+export interface PushRegistrationResult {
+  token: string | null;
+  error: string | null;
+}
+
+function getEasProjectId(): string | undefined {
+  return (
+    (Constants.expoConfig?.extra as { eas?: { projectId?: string } } | undefined)?.eas?.projectId ??
+    (Constants.easConfig as { projectId?: string } | undefined)?.projectId
+  );
+}
 
 export type ScheduleType = "4h" | "8h" | "12h" | "24h" | "custom";
 
@@ -68,27 +81,40 @@ export async function requestNotificationPermissions(): Promise<boolean> {
 // ── Push token registration ───────────────────────────────────────────────────
 // Passive: only fetches and stores a push token if permission is ALREADY
 // granted. Does NOT trigger the OS dialog. The friendly pre-prompt handles that.
-export async function registerForPushNotifications(userId: string): Promise<string | null> {
-  if (Platform.OS === "web") return null;
+export async function registerForPushNotifications(userId: string): Promise<PushRegistrationResult> {
+  if (Platform.OS === "web") {
+    return { token: null, error: "Push notifications are not supported on web." };
+  }
 
   try {
     const { status } = await Notifications.getPermissionsAsync();
-    if (status !== "granted") return null;
+    if (status !== "granted") {
+      return { token: null, error: "Notification permission was not granted." };
+    }
 
-    // Get Expo push token (requires EAS project ID for remote delivery;
-    // token registration gracefully skips if not configured)
-    const tokenData = await Notifications.getExpoPushTokenAsync();
+    const projectId = getEasProjectId();
+    if (!projectId) {
+      return { token: null, error: "Missing EAS projectId in app config." };
+    }
+
+    // Pass projectId explicitly — auto-detect is unreliable in standalone builds.
+    // On Android standalone APKs this also requires FCM credentials uploaded to EAS
+    // (otherwise this throws "Default FirebaseApp is not initialized").
+    const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
     const token = tokenData.data;
 
-    if (isFirebaseConfigured && db && token) {
+    if (!token) {
+      return { token: null, error: "Expo push token came back empty." };
+    }
+
+    if (isFirebaseConfigured && db) {
       await updateDoc(doc(db, "users", userId), { expoPushToken: token });
     }
 
-    return token ?? null;
-  } catch {
-    // getExpoPushTokenAsync fails in Expo Go without EAS project config —
-    // permissions are still registered, local notifications still work
-    return null;
+    return { token, error: null };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { token: null, error: message };
   }
 }
 
