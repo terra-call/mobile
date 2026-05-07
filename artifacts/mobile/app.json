@@ -27,6 +27,7 @@
     "android": {
       "package": "com.terracall.mobile",
       "versionCode": 1,
+      "googleServicesFile": "./google-services.json",
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
