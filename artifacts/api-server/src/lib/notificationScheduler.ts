@@ -110,8 +110,11 @@ export async function sendEmergencyAlert(
   caregiverTokens: string[],
   caregiverPhones: string[]
 ): Promise<{ pushSent: number; smsSent: number }> {
-  const title = `🚨 EMERGENCY — ${receiverName}`;
-  const body = `${receiverName} has indicated they need help immediately. This is a manual emergency alert — please respond now.`;
+  // PHI hygiene: lock-screen visible push payloads use generic copy.
+  // The receiver's name is sent only in `data`, which the app can read once
+  // unlocked and authenticated.
+  const title = "🚨 Terra Call — Emergency Alert";
+  const body = "A care receiver needs help immediately. Open the app to respond.";
 
   // Suppress any pending scheduler-driven missed/escalation alerts for this user
   markEmergency(userId);
@@ -120,7 +123,6 @@ export async function sendEmergencyAlert(
   logger.info(
     {
       userId,
-      receiverName,
       tokensReceived: caregiverTokens.length,
       tokensValid: validTokens.length,
       phonesReceived: caregiverPhones.length,
@@ -128,7 +130,7 @@ export async function sendEmergencyAlert(
     "Manual emergency alert"
   );
 
-  await sendPush(caregiverTokens, title, body, { type: "manual_emergency", userId });
+  await sendPush(caregiverTokens, title, body, { type: "manual_emergency", userId, receiverName });
 
   if (isSmsConfigured() && caregiverPhones.length > 0) {
     await sendDirectSms(caregiverPhones, receiverName, "manual_emergency", 0);
@@ -207,13 +209,13 @@ async function tick(): Promise<void> {
 
     // ── Emergency escalation ─────────────────────────────────────────────────
     if (minSinceDue >= entry.escalationWindowMin && !entry.escalationNotifiedAt) {
-      logger.info({ userId, receiverName: entry.receiverName }, "Escalation alerts firing");
+      logger.info({ userId }, "Escalation alerts firing");
 
       await sendPush(
         entry.caregiverTokens,
-        `🚨 EMERGENCY — ${entry.receiverName}`,
-        `${entry.receiverName} has not checked in for ${Math.round(minSinceDue)} minutes. Immediate attention required.`,
-        { type: "emergency", userId }
+        "🚨 Terra Call — Emergency Alert",
+        "A care receiver has not checked in. Open the app for details.",
+        { type: "emergency", userId, receiverName: entry.receiverName }
       );
 
       if (entry.receiverToken) {
@@ -240,13 +242,13 @@ async function tick(): Promise<void> {
 
     // ── Missed check-in ──────────────────────────────────────────────────────
     } else if (minSinceDue >= entry.missedWindowMin && !entry.missedNotifiedAt) {
-      logger.info({ userId, receiverName: entry.receiverName }, "Missed check-in alerts firing");
+      logger.info({ userId }, "Missed check-in alerts firing");
 
       await sendPush(
         entry.caregiverTokens,
-        `⚠️ Missed Check-In — ${entry.receiverName}`,
-        `${entry.receiverName} missed their scheduled check-in. Please verify they are safe.`,
-        { type: "missed", userId }
+        "⚠️ Terra Call — Missed Check-In",
+        "A care receiver missed their scheduled check-in. Open the app for details.",
+        { type: "missed", userId, receiverName: entry.receiverName }
       );
 
       if (entry.receiverToken) {

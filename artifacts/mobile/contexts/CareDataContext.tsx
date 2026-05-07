@@ -222,6 +222,9 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
       const missed = (data.missedWindowMin ?? DEFAULT_MISSED_MIN) as number;
       const escalation = (data.escalationWindowMin ?? DEFAULT_ESCALATION_MIN) as number;
       const notifEnabled = data.notificationsEnabled ?? false;
+      // SMS consent: caregivers only receive SMS backup alerts if the care
+      // receiver has explicitly opted in (PHI flows through cellular carriers).
+      const smsConsent = data.smsConsent ?? false;
       if (!notifEnabled) return;
 
       const ts = new Date(lastCheckIn).getTime();
@@ -237,17 +240,17 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
 
       if (diffMin >= escalation && !notifiedRef.current.emergency) {
         notifiedRef.current.emergency = true;
-        // Push notification
+        // Push notification — generic copy on lock screen, name only in data payload
         if (cgTokens.length > 0) {
           await sendExpoPushNotification(
             cgTokens,
-            `🚨 EMERGENCY — ${receiverName}`,
-            `${receiverName} has not checked in for ${Math.round(diffMin)} minutes.`,
-            { type: "emergency", userId: user.id }
+            "🚨 Terra Call — Emergency Alert",
+            "A care receiver has not checked in. Open the app for details.",
+            { type: "emergency", userId: user.id, receiverName }
           );
         }
-        // SMS backup via API server
-        if (cgPhones.length > 0) {
+        // SMS backup via API server (only when receiver has opted in to SMS)
+        if (cgPhones.length > 0 && smsConsent) {
           await triggerSmsAlert(cgPhones, receiverName, "emergency", diffMin);
         }
         // Log event for the admin dashboard
@@ -260,17 +263,17 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
         }).catch(() => {});
       } else if (diffMin >= missed && !notifiedRef.current.missed) {
         notifiedRef.current.missed = true;
-        // Push notification
+        // Push notification — generic copy on lock screen, name only in data payload
         if (cgTokens.length > 0) {
           await sendExpoPushNotification(
             cgTokens,
-            `⚠️ Missed Check-In — ${receiverName}`,
-            `${receiverName} missed their scheduled check-in window.`,
-            { type: "missed", userId: user.id }
+            "⚠️ Terra Call — Missed Check-In",
+            "A care receiver missed their scheduled check-in. Open the app for details.",
+            { type: "missed", userId: user.id, receiverName }
           );
         }
-        // SMS backup via API server
-        if (cgPhones.length > 0) {
+        // SMS backup via API server (only when receiver has opted in to SMS)
+        if (cgPhones.length > 0 && smsConsent) {
           await triggerSmsAlert(cgPhones, receiverName, "missed", diffMin);
         }
         // Log event for the admin dashboard
@@ -337,9 +340,13 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
     if (!user) return;
     const receiverName = user.name ?? "Care Receiver";
 
-    // Mark status in Firestore so caregiver dashboards update in real time
+    // Mark status in Firestore so caregiver dashboards update in real time.
+    // Also read smsConsent so we know whether to include SMS in the fallback.
+    let smsConsent = false;
     if (isFirebaseConfigured && db) {
       await updateDoc(doc(db, "users", user.id), { status: "emergency" });
+      const snap = await getDoc(doc(db, "users", user.id)).catch(() => null);
+      if (snap?.exists()) smsConsent = snap.data().smsConsent ?? false;
     }
 
     // Suppress local notification flags so we don't fire a missed alert too
@@ -359,12 +366,13 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
     const cgTokens = contacts.map((c) => c.pushToken).filter(Boolean) as string[];
     const cgPhones = contacts.map((c) => c.phone).filter(Boolean) as string[];
 
-    // Single atomic call to the server — handles push, SMS, and missed-alert suppression
+    // Single atomic call to the server — handles push, SMS, and missed-alert suppression.
+    // Server respects smsConsent and skips SMS when false.
     const ok = await callNotifyApi("/notify/emergency", {
       userId: user.id,
       receiverName,
       caregiverTokens: cgTokens,
-      caregiverPhones: cgPhones,
+      caregiverPhones: smsConsent ? cgPhones : [],
     });
 
     // Fallback: if the server is unreachable, send directly from device
@@ -372,12 +380,12 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
       if (cgTokens.length > 0) {
         await sendExpoPushNotification(
           cgTokens,
-          `🚨 EMERGENCY — ${receiverName}`,
-          `${receiverName} has indicated they need help immediately.`,
-          { type: "manual_emergency", userId: user.id }
+          "🚨 Terra Call — Emergency Alert",
+          "A care receiver needs help immediately. Open the app to respond.",
+          { type: "manual_emergency", userId: user.id, receiverName }
         );
       }
-      if (cgPhones.length > 0) {
+      if (cgPhones.length > 0 && smsConsent) {
         await triggerSmsAlert(cgPhones, receiverName, "manual_emergency", 0);
       }
     }

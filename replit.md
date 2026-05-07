@@ -24,7 +24,7 @@ The project is organized into three main artifacts:
 ### Core Features and Technologies
 - **Authentication**: Firebase Authentication (email/password).
 - **Database**: Firestore for real-time data storage, managing user profiles, statuses, and configurations.
-  - `users` collection stores user details, roles (`care-receiver`, `caregiver`, `admin`), check-in status, location, and notification settings.
+  - `users` collection stores user details, roles (`care-receiver`, `caregiver`, `admin`), check-in status, location, notification settings, and `smsConsent` (HIPAA — gates whether caregiver SMS alerts are sent).
   - `invites` collection handles caregiver-care receiver linking via invite codes.
   - `events` collection logs user actions like check-ins, missed alerts, and emergencies.
   - `organizations` collection supports B2B accounts with fields for Medicaid contracts.
@@ -44,6 +44,7 @@ The project is organized into three main artifacts:
 - **Security**: Firestore security rules are crucial for managing data access based on user roles and relationships. Rules are defined for `users`, `invites`, `events`, `organizations`, `auditLogs`, and `careReports` collections.
 - **Firestore Indexes**: Composite indexes required by code are tracked in `firestore.indexes.json` (repo root). Care report generation needs the `events` index on (`userId` ASC, `createdAt` ASC) — must be deployed via Firebase Console or `firebase deploy --only firestore:indexes` before that flow works.
 - **Auditability**: Implementation of an append-only audit log for HIPAA compliance, tracking user actions and data access.
+- **PHI hygiene**: Push notification titles/bodies are generic (no names) — receiver name is sent in the `data` payload only, visible to the app once unlocked. SMS bodies still contain names but are gated by `smsConsent` per care receiver. Server logs no longer include receiver names or full phone numbers (last-4 digits only).
 - **Report Generation**: Care report generation includes client-side aggregation of events, secure export options (CSV/PDF), and PHI hygiene for temporary files.
 
 ## External Dependencies

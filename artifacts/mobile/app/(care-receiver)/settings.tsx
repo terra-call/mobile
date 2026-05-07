@@ -84,6 +84,9 @@ export default function SettingsScreen() {
   const [pushPermStatus, setPushPermStatus] = useState<NotifPermStatus>("undetermined");
   const [pushRequesting, setPushRequesting] = useState(false);
 
+  // SMS consent (HIPAA — caregiver SMS alerts include receiver's name)
+  const [smsConsent, setSmsConsent] = useState(false);
+
   // Notification settings
   const [notifEnabled, setNotifEnabled] = useState(DEFAULT_NOTIFICATION_SETTINGS.enabled);
   const [scheduleType, setScheduleType] = useState<ScheduleType>(DEFAULT_NOTIFICATION_SETTINGS.schedule.type);
@@ -161,6 +164,9 @@ export default function SettingsScreen() {
           }
           if (data.escalationWindowMin !== undefined) {
             setEscalationWindow(String(data.escalationWindowMin));
+          }
+          if (data.smsConsent !== undefined) {
+            setSmsConsent(data.smsConsent as boolean);
           }
         }
       })
@@ -322,6 +328,7 @@ export default function SettingsScreen() {
         checkInCustomMinute: customMinute,
         missedWindowMin: missedNum,
         escalationWindowMin: escalationNum,
+        smsConsent,
       });
 
       const settings: NotificationSettings = {
@@ -566,6 +573,22 @@ export default function SettingsScreen() {
                 <Switch
                   value={notifEnabled}
                   onValueChange={setNotifEnabled}
+                  trackColor={{ false: colors.border, true: colors.primary }}
+                  thumbColor="#ffffff"
+                />
+              </View>
+
+              {/* SMS consent toggle (HIPAA) */}
+              <View style={[styles.notifToggleRow, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <View style={{ flex: 1, gap: 3 }}>
+                  <Text style={[styles.notifToggleLabel, { color: colors.text }]}>SMS backup alerts</Text>
+                  <Text style={[styles.notifToggleSub, { color: colors.mutedForeground }]}>
+                    Allow caregivers to receive text messages with your name when you miss a check-in or trigger an emergency. SMS travels through your cell carrier and is not end-to-end encrypted.
+                  </Text>
+                </View>
+                <Switch
+                  value={smsConsent}
+                  onValueChange={setSmsConsent}
                   trackColor={{ false: colors.border, true: colors.primary }}
                   thumbColor="#ffffff"
                 />

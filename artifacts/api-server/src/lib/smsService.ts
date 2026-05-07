@@ -46,7 +46,7 @@ export async function sendSms(to: string, body: string): Promise<boolean> {
     normalised = `+${digits}`;
   }
   if (digits.length < 8) {
-    logger.warn({ to }, "SMS skipped: phone number too short or malformed");
+    logger.warn("SMS skipped: phone number too short or malformed");
     return false;
   }
 
@@ -63,10 +63,13 @@ export async function sendSms(to: string, body: string): Promise<boolean> {
       from: fromNumber!,
       to: normalised,
     });
-    logger.info({ sid: message.sid, to: normalised }, "SMS sent");
+    // PHI hygiene: log only the message SID and last-4 digits of the recipient.
+    const tail = normalised.slice(-4);
+    logger.info({ sid: message.sid, toMasked: `***${tail}` }, "SMS sent");
     return true;
   } catch (err) {
-    logger.error({ err, to: normalised }, "Failed to send SMS");
+    const tail = normalised.slice(-4);
+    logger.error({ err, toMasked: `***${tail}` }, "Failed to send SMS");
     return false;
   }
 }
