@@ -81,6 +81,11 @@ export default function CameraStreamScreen() {
 
   const [connecting, setConnecting] = useState(true);
   const [tokenError, setTokenError] = useState<string | null>(null);
+  // DIAGNOSTIC — raw error string from Twilio SDK / token endpoint, shown
+  // under the friendly "Video unavailable" copy so we can debug failures
+  // on real devices without needing remote logs. Safe to leave in: contains
+  // no PHI, only Twilio error codes / HTTP status reasons.
+  const [tokenErrorDetail, setTokenErrorDetail] = useState<string | null>(null);
   // TWILIO VIDEO — connection lifecycle. `roomConnected` flips true when
   // the SDK's onRoomDidConnect fires; `remoteTracks` accumulates remote
   // video tracks the caregiver subscribes to.
@@ -159,6 +164,7 @@ export default function CameraStreamScreen() {
           });
         }
         setTokenError(result.message);
+        setTokenErrorDetail(`token mint failed: ${result.code}`);
         setConnecting(false);
         return;
       }
@@ -193,6 +199,7 @@ export default function CameraStreamScreen() {
             });
           }
           setTokenError(VIDEO_TOKEN_ERROR_MESSAGE);
+          setTokenErrorDetail(`SDK connect threw: ${reason}`);
           setConnecting(false);
         }
       } else {
@@ -270,6 +277,7 @@ export default function CameraStreamScreen() {
         });
       }
       setTokenError(VIDEO_TOKEN_ERROR_MESSAGE);
+      setTokenErrorDetail(`Twilio rejected room connect: ${reason}`);
       setConnecting(false);
     },
     [user?.id, roomName],
@@ -407,6 +415,11 @@ export default function CameraStreamScreen() {
             <Feather name="alert-triangle" size={56} color="#FF3B30" />
             <Text style={styles.errorTitle}>Video unavailable</Text>
             <Text style={styles.errorSub}>{tokenError}</Text>
+            {tokenErrorDetail && (
+              <Text selectable style={styles.errorDiag}>
+                Diagnostic: {tokenErrorDetail}
+              </Text>
+            )}
           </View>
         ) : connecting ? (
           <View style={styles.placeholder}>
@@ -516,6 +529,15 @@ const styles = StyleSheet.create({
     textAlign: "center",
     lineHeight: 22,
     maxWidth: 320,
+  },
+  errorDiag: {
+    color: "rgba(255, 200, 200, 0.7)",
+    fontSize: 11,
+    fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+    textAlign: "center",
+    marginTop: 12,
+    paddingHorizontal: 16,
+    maxWidth: 360,
   },
   placeholderTitle: { color: "#fff", fontSize: 22, fontWeight: "700", textAlign: "center" },
   placeholderSub: {
