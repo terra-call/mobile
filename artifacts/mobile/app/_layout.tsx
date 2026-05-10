@@ -95,13 +95,26 @@ function CameraActivationListener() {
 
     const handle = (notification: Notifications.Notification) => {
       const data = notification.request?.content?.data as
-        | { type?: string; roomName?: string; caregiverName?: string }
+        | { type?: string; roomName?: string; caregiverName?: string; receiverUid?: string }
         | undefined;
       if (data?.type !== "camera_activate" || !data.roomName) return;
 
+      // DEFENSIVE — if the push includes the intended receiver UID, ignore
+      // it when the currently logged-in user doesn't match. This guards
+      // against the stale-push-token routing bug where a caregiver's old
+      // device still holds the receiver's expoPushToken in Firestore.
+      const uid = userIdRef.current;
+      if (data.receiverUid && uid && data.receiverUid !== uid) {
+        logAudit({
+          userId: uid,
+          action: "camera_activation_ignored",
+          details: `Ignored camera_activate push intended for ${data.receiverUid} (this device is logged in as ${uid}, room=${data.roomName})`,
+        });
+        return;
+      }
+
       // AUDIT — record receipt on the receiver's device. Use the userId
       // ref so a logout/login mid-call doesn't write to the wrong uid.
-      const uid = userIdRef.current;
       if (uid) {
         logAudit({
           userId: uid,

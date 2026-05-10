@@ -277,6 +277,10 @@ router.post(
       type: "camera_activate",
       roomName,
       caregiverName: caregiverName ?? "Caregiver",
+      // Defensive: include the intended receiver UID so the mobile listener
+      // can ignore the push if the device happens to be logged into a
+      // different account (e.g. stale push token routed to wrong device).
+      receiverUid: targetUserId,
     });
 
     if (!pushResult.delivered) {
