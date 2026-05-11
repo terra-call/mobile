@@ -43,6 +43,7 @@ export type AuditAction =
   | "camera_consent_checked"
   | "camera_activation_push_sent"
   | "camera_activation_received"
+  | "camera_activation_ignored"
   | "camera_activation_failed"
   | "video_stream_connected"
   | "unauthorized_token_request";

@@ -34,6 +34,7 @@ interface RegisterData {
   name: string;
   role: UserRole;
   phone?: string;
+  smsConsent?: boolean;
 }
 
 export interface PendingRecovery {
@@ -257,7 +258,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }).catch(() => {});
   }, [pendingRecovery]);
 
-  const register = useCallback(async ({ email, password, name, role, phone }: RegisterData) => {
+  const register = useCallback(async ({ email, password, name, role, phone, smsConsent }: RegisterData) => {
     if (isFirebaseConfigured && auth && db) {
       const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
 
@@ -277,6 +278,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           name,
           role,
           phone: phone ?? "",
+          // A2P 10DLC — explicit SMS opt-in capture at signup. Stored as a
+          // boolean alongside the phone number so the audit trail can prove
+          // when and how the user consented to receive transactional SMS
+          // alerts. Twilio reviewers reference this field's existence as
+          // proof of the opt-in CTA described in the campaign.
+          smsConsent: smsConsent === true,
+          smsConsentAt: smsConsent === true ? serverTimestamp() : null,
           status: role === "care-receiver" ? "unknown" : null,
           lastCheckIn: null,
           location: null,

@@ -65,6 +65,7 @@ export default function RegisterScreen() {
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+  const [smsConsent, setSmsConsent] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const emailRef = useRef<TextInput>(null);
@@ -103,6 +104,16 @@ export default function RegisterScreen() {
       Alert.alert("Error", "Password must be at least 6 characters");
       return;
     }
+    // A2P 10DLC — block submit if a phone number is provided but the user
+    // has not explicitly checked the SMS consent box. This is the documented
+    // opt-in CTA referenced in the Twilio A2P campaign description.
+    if (phone.trim() && !smsConsent) {
+      Alert.alert(
+        "SMS Consent Required",
+        "Please check the SMS consent box below to confirm you agree to receive emergency alert text messages, or remove your phone number to skip SMS.",
+      );
+      return;
+    }
 
     setLoading(true);
     try {
@@ -115,6 +126,7 @@ export default function RegisterScreen() {
           name: name.trim(),
           role: selectedRole,
           phone: phone.trim(),
+          smsConsent,
         });
       }
     } catch (err: unknown) {
@@ -290,6 +302,40 @@ export default function RegisterScreen() {
           </View>
 
           {!isRecovery && (
+            <Pressable
+              onPress={() => setSmsConsent((v) => !v)}
+              style={[
+                styles.consentRow,
+                {
+                  backgroundColor: colors.card,
+                  borderColor: smsConsent ? colors.primary : colors.border,
+                },
+              ]}
+            >
+              <View
+                style={[
+                  styles.consentBox,
+                  {
+                    backgroundColor: smsConsent ? colors.primary : "transparent",
+                    borderColor: smsConsent ? colors.primary : colors.border,
+                  },
+                ]}
+              >
+                {smsConsent && (
+                  <Feather name="check" size={14} color={colors.primaryForeground} />
+                )}
+              </View>
+              <Text style={[styles.consentText, { color: colors.text }]}>
+                I agree to receive SMS alerts from Terra Call for missed check-ins and
+                emergencies. Msg frequency varies. Msg &amp; data rates may apply. Reply
+                STOP to cancel, HELP for help. See our{" "}
+                <Text style={{ color: colors.accent }}>Privacy Policy</Text> and{" "}
+                <Text style={{ color: colors.accent }}>Terms</Text>.
+              </Text>
+            </Pressable>
+          )}
+
+          {!isRecovery && (
             <View>
               <Text style={[styles.label, { color: colors.mutedForeground }]}>Password *</Text>
               <View style={styles.passwordRow}>
@@ -426,6 +472,29 @@ const styles = StyleSheet.create({
     alignSelf: "stretch",
     alignItems: "center",
     justifyContent: "center",
+  },
+  consentRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 12,
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  consentBox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 1,
+  },
+  consentText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 19,
+    fontFamily: "Inter_400Regular",
   },
   loginLink: { flexDirection: "row", justifyContent: "center", marginTop: 24 },
   loginLinkText: { fontSize: 14, fontFamily: "Inter_400Regular" },
