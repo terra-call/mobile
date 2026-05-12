@@ -23,6 +23,7 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import twilio from "twilio";
 import { logger } from "../lib/logger";
 import {
+  createFirestoreDocAsCaller,
   fetchUserDocAsCaller,
   isPermittedForReceiver,
   verifyFirebaseIdToken,
@@ -249,60 +250,77 @@ router.post(
       (receiverDoc as { fields?: { expoPushToken?: { stringValue?: string } } } | null)
         ?.fields?.expoPushToken?.stringValue ?? "";
 
-    if (!receiverPushToken) {
-      logger.warn(
+    // FIRESTORE SIGNALING FALLBACK — write a `cameraActivations` doc that
+    // the receiver subscribes to via onSnapshot. This is the PRIMARY signal:
+    // it works on every platform regardless of push token state (FCM-blocked
+    // Android, app force-killed, silent mode, low power, missing iOS APNs
+    // entitlement, etc). The push is now best-effort wakeup only.
+    const signalDocName = await createFirestoreDocAsCaller(
+      auth.idToken,
+      "cameraActivations",
+      {
+        receiverUid: targetUserId,
+        callerUid: auth.uid,
+        callerName: caregiverName ?? "Caregiver",
+        receiverName: receiverName ?? "Care receiver",
+        roomName,
+        status: "pending",
+        createdAt: new Date(),
+      },
+    );
+
+    if (!signalDocName) {
+      logger.error(
         { callerUid: auth.uid, targetUserId, roomName },
-        "Initiate rejected — no expoPushToken on file for receiver",
-      );
-      return res.status(409).json({
-        error: "no_push_token_on_file",
-        message:
-          "The care receiver hasn't registered a device for notifications yet.",
-      });
-    }
-
-    if (!receiverPushToken.startsWith("ExponentPushToken")) {
-      return res.status(400).json({
-        error: "invalid_push_token",
-        message: "receiverPushToken does not look like a valid Expo push token",
-      });
-    }
-
-    const title = "Camera Activation — Emergency";
-    const body = `${caregiverName ?? "Your caregiver"} needs to see ${receiverName ?? "you"} now. Your front camera is being activated.`;
-
-    // High-priority push with data payload that the mobile app's notification
-    // listener uses to navigate the receiver into the camera-publish screen.
-    const pushResult = await sendPush([receiverPushToken], title, body, {
-      type: "camera_activate",
-      roomName,
-      caregiverName: caregiverName ?? "Caregiver",
-      // Defensive: include the intended receiver UID so the mobile listener
-      // can ignore the push if the device happens to be logged into a
-      // different account (e.g. stale push token routed to wrong device).
-      receiverUid: targetUserId,
-    });
-
-    if (!pushResult.delivered) {
-      logger.warn(
-        { roomName, receiverName, targetUserId, callerUid: auth.uid, validTokens: pushResult.validTokens },
-        "Camera activation push failed to dispatch"
+        "Initiate failed — could not write cameraActivations signal doc",
       );
       return res.status(502).json({
-        error: "push_dispatch_failed",
-        message: "Could not reach the receiver's device. Please try again.",
+        error: "signal_write_failed",
+        message: "Could not signal the receiver's device. Please try again.",
       });
+    }
+
+    // Best-effort push wakeup — fires only if the receiver has a valid token
+    // on file. Failure here is logged but does NOT fail the request, because
+    // the Firestore signal above is what actually triggers camera activation
+    // on devices with the app foregrounded or recently backgrounded.
+    let pushSent = false;
+    if (receiverPushToken && receiverPushToken.startsWith("ExponentPushToken")) {
+      const title = "Camera Activation — Emergency";
+      const body = `${caregiverName ?? "Your caregiver"} needs to see ${receiverName ?? "you"} now. Your front camera is being activated.`;
+      const pushResult = await sendPush([receiverPushToken], title, body, {
+        type: "camera_activate",
+        roomName,
+        caregiverName: caregiverName ?? "Caregiver",
+        // Defensive: include the intended receiver UID so the mobile listener
+        // can ignore the push if the device happens to be logged into a
+        // different account (e.g. stale push token routed to wrong device).
+        receiverUid: targetUserId,
+      });
+      pushSent = pushResult.delivered;
+      if (!pushResult.delivered) {
+        logger.warn(
+          { roomName, targetUserId, callerUid: auth.uid, validTokens: pushResult.validTokens },
+          "Camera activation push wakeup failed (Firestore signal still delivered)",
+        );
+      }
+    } else {
+      logger.info(
+        { callerUid: auth.uid, targetUserId, roomName, hasToken: !!receiverPushToken },
+        "Skipping push wakeup — no valid Expo push token on file (Firestore signal still delivered)",
+      );
     }
 
     logger.info(
-      { roomName, receiverName, caregiverName, targetUserId, callerUid: auth.uid },
-      "Camera activation push sent (auth verified)",
+      { roomName, receiverName, caregiverName, targetUserId, callerUid: auth.uid, pushSent, signalDoc: signalDocName },
+      "Camera activation signaled (auth verified)",
     );
 
     return res.json({
       ok: true,
       roomName,
-      pushSent: true,
+      pushSent,
+      signalWritten: true,
       videoConfigured: isVideoConfigured(),
     });
   } catch (err) {

@@ -404,6 +404,9 @@ export default function SettingsScreen() {
             try {
               await updateDoc(doc(db, "users", user.id), {
                 permittedCaregivers: arrayRemove(cg),
+                // Keep denormalized ID list in sync (used by Firestore rules
+                // to authorize cameraActivations writes).
+                permittedCaregiverIds: arrayRemove(cg.id),
               });
               setCaregivers((prev) => prev.filter((c) => c.id !== cg.id));
             } catch {

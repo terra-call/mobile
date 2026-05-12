@@ -119,7 +119,15 @@ export async function redeemInvite(
         email: data.caregiverEmail,
       };
 
-      tx.update(userRef, { permittedCaregivers: arrayUnion(cg) });
+      // Maintain a denormalized `permittedCaregiverIds: string[]` in parallel
+      // with the rich `permittedCaregivers` objects array. The IDs array is
+      // what Firestore Security Rules consult to authorize cameraActivations
+      // writes (rules can use `in` against a list of strings, but cannot
+      // iterate map values inside an array of objects).
+      tx.update(userRef, {
+        permittedCaregivers: arrayUnion(cg),
+        permittedCaregiverIds: arrayUnion(cg.id),
+      });
       tx.update(inviteRef, {
         redeemedBy: receiver.id,
         redeemedAt: new Date().toISOString(),

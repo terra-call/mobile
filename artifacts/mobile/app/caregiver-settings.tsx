@@ -166,6 +166,9 @@ export default function CaregiverSettingsScreen() {
             try {
               await updateDoc(doc(db, "users", receiver.id), {
                 permittedCaregivers: arrayRemove(cgEntry),
+                // Keep denormalized ID list in sync (used by Firestore rules
+                // to authorize cameraActivations writes).
+                permittedCaregiverIds: arrayRemove(cgEntry.id),
               });
               setReceivers((prev) => prev.filter((r) => r.id !== receiver.id));
             } catch {

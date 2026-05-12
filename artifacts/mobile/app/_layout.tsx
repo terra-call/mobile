@@ -15,12 +15,33 @@ import { Platform, StyleSheet, Text, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { KeyboardProvider } from "react-native-keyboard-controller";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import {
+  collection,
+  onSnapshot,
+  query,
+  serverTimestamp,
+  updateDoc,
+  where,
+  type Timestamp,
+} from "firebase/firestore";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { CareDataProvider } from "@/contexts/CareDataContext";
 import { STORAGE_KEYS } from "@/constants/storage";
 import { logAudit } from "@/services/audit";
 import { registerForPushNotifications } from "@/services/notifications";
+import { db, isFirebaseConfigured } from "@/services/firebase";
+
+// Module-level dedupe so the push handler and the Firestore handler
+// don't both navigate for the same activation. First handler to claim a
+// roomName wins; the other no-ops. Auto-evicts after 60s.
+const handledActivations = new Set<string>();
+function claimActivation(roomName: string): boolean {
+  if (handledActivations.has(roomName)) return false;
+  handledActivations.add(roomName);
+  setTimeout(() => handledActivations.delete(roomName), 60_000);
+  return true;
+}
 
 const ONBOARDING_KEY = STORAGE_KEYS.ONBOARDING_SEEN;
 
@@ -123,6 +144,8 @@ function CameraActivationListener() {
         });
       }
 
+      if (!claimActivation(data.roomName)) return;
+
       router.push({
         pathname: "/camera-stream",
         params: {
@@ -142,6 +165,97 @@ function CameraActivationListener() {
       respSub.remove();
     };
   }, []);
+
+  return null;
+}
+
+// FIRESTORE SIGNALING FALLBACK — primary delivery path for camera activation.
+// Subscribes to `cameraActivations` docs targeting the current care-receiver
+// and triggers the same publish-mode navigation as the push handler. Works on
+// every platform regardless of push-token state (FCM-blocked Android, missing
+// APNs, silent mode, low power, etc) as long as the app is foregrounded or
+// recently backgrounded — Firestore listeners run on a persistent connection.
+function CameraActivationFirestoreListener() {
+  const { user } = useAuth();
+  const sessionStartRef = useRef<number>(Date.now());
+  const userIdRef = useRef<string | null>(user?.id ?? null);
+
+  useEffect(() => {
+    userIdRef.current = user?.id ?? null;
+    sessionStartRef.current = Date.now();
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+    if (!user || user.role !== "care-receiver") return;
+    if (!isFirebaseConfigured || !db) return;
+
+    const q = query(
+      collection(db, "cameraActivations"),
+      where("receiverUid", "==", user.id),
+    );
+
+    const unsub = onSnapshot(
+      q,
+      (snapshot) => {
+        snapshot.docChanges().forEach((change) => {
+          if (change.type !== "added") return;
+          const data = change.doc.data() as {
+            receiverUid?: string;
+            callerName?: string;
+            roomName?: string;
+            status?: string;
+            createdAt?: Timestamp;
+          };
+
+          if (data.status !== "pending") return;
+          const roomName = data.roomName;
+          if (!roomName) return;
+
+          // Skip docs older than this session - 5s slack. Prevents replaying
+          // historical activations on app reopen / re-listen.
+          const createdAtMs = data.createdAt?.toMillis?.() ?? 0;
+          if (createdAtMs && createdAtMs < sessionStartRef.current - 5000) return;
+
+          // Defensive — ignore if for a different uid (shouldn't happen given
+          // the where() filter, but match the push-handler defense).
+          const uid = userIdRef.current;
+          if (uid && data.receiverUid && data.receiverUid !== uid) return;
+
+          if (!claimActivation(roomName)) return;
+
+          if (uid) {
+            logAudit({
+              userId: uid,
+              action: "camera_activation_received",
+              details: `Care-receiver device received cameraActivations doc (room=${roomName}, from=${data.callerName ?? "?"})`,
+            }).catch(() => {});
+          }
+
+          // Best-effort: mark the doc processed so other devices logged into
+          // the same account (rare but possible) don't re-trigger.
+          updateDoc(change.doc.ref, {
+            status: "processed",
+            processedAt: serverTimestamp(),
+          }).catch(() => {});
+
+          router.push({
+            pathname: "/camera-stream",
+            params: {
+              mode: "publish",
+              roomName,
+              caregiverName: data.callerName ?? "Caregiver",
+            },
+          });
+        });
+      },
+      () => {
+        // Permission errors / network errors — silent. Push still works.
+      },
+    );
+
+    return () => unsub();
+  }, [user?.id, user?.role]);
 
   return null;
 }
@@ -210,6 +324,7 @@ function RootLayoutNav() {
       <NavigationGuard />
       <NotificationInitializer />
       <CameraActivationListener />
+      <CameraActivationFirestoreListener />
       <Stack
         screenOptions={{
           headerShown: false,

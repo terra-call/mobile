@@ -66,7 +66,12 @@ export function buildVideoRoomName(receiverId: string): string {
  * caregiver of `targetUserId`, and only then dispatches the push.
  */
 export async function initiateCameraActivation(input: {
-  receiverPushToken: string;
+  /**
+   * Best-effort push wakeup token. Optional — server now writes a Firestore
+   * signal doc that the receiver subscribes to via onSnapshot, which is the
+   * primary delivery mechanism. Push is just a wakeup for backgrounded apps.
+   */
+  receiverPushToken?: string;
   receiverName: string;
   caregiverName: string;
   roomName: string;

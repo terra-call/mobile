@@ -134,6 +134,10 @@ export default function EmergencyCallScreen() {
       return;
     }
 
+    // Push token is now optional — the server writes a Firestore signal doc
+    // that the receiver subscribes to via onSnapshot, which works even when
+    // the device has no valid push token (Android FCM blocked, missing APNs,
+    // app force-killed, etc). Push remains as a best-effort wakeup.
     const [consent, pushToken]: [CameraConsent, string | null] = await Promise.all([
       getCameraConsent(receiverId),
       getReceiverPushToken(receiverId),
@@ -163,34 +167,13 @@ export default function EmergencyCallScreen() {
       return;
     }
 
-    if (!pushToken) {
-      Alert.alert(
-        "Cannot reach device",
-        `${receiverName ?? "The care receiver"} has consented to camera activation, but their device hasn't registered for push notifications yet. Ask them to open the app and enable notifications.`
-      );
-      // AUDIT — failed before we even tried to send the push.
-      if (user?.id) {
-        logAudit({
-          userId: user.id,
-          action: "camera_activation_failed",
-          details: `Receiver ${receiverName ?? receiverId} has no Expo push token registered`,
-          targetUserId: receiverId,
-        });
-      }
-      markEmergencyEventUnanswered(eventIdRef.current, {
-        cameraActivated: false,
-        consentStatus: consent,
-      });
-      lifecycleClosedRef.current = true;
-      setCallState("idle");
-      return;
-    }
-
     const roomName = roomNameRef.current ?? buildVideoRoomName(receiverId);
     roomNameRef.current = roomName;
 
     const result = await initiateCameraActivation({
-      receiverPushToken: pushToken,
+      // Pass token if we have one (push wakeup) — server tolerates absence
+      // and falls back to Firestore signaling, which always works.
+      receiverPushToken: pushToken ?? undefined,
       receiverName: receiverName ?? "Care receiver",
       caregiverName: user?.name ?? "Caregiver",
       roomName,

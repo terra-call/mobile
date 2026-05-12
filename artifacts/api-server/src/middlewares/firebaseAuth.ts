@@ -168,6 +168,64 @@ export async function fetchUserDocAsCaller(
 }
 
 /**
+ * Helper: forward the caller's ID token to the Firestore REST API to CREATE
+ * a new document in a collection (auto-generated id). Existing Firestore
+ * Security Rules govern whether the caller may write. Returns the created
+ * doc's full resource name on success, or null on failure.
+ *
+ * Used by /api/video/initiate to write a `cameraActivations` signal doc
+ * that the receiver's app subscribes to via onSnapshot — the Firestore
+ * fallback for devices that can't receive push notifications (Android FCM
+ * blocked by org policy, app force-killed, silent mode, low power, etc).
+ */
+export async function createFirestoreDocAsCaller(
+  callerIdToken: string,
+  collectionPath: string,
+  fields: Record<string, unknown>,
+): Promise<string | null> {
+  if (!FIREBASE_PROJECT_ID) return null;
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/${collectionPath}`;
+    const r = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${callerIdToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ fields: encodeFirestoreFields(fields) }),
+    });
+    if (!r.ok) return null;
+    const json = (await r.json()) as { name?: string };
+    return json.name ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function encodeFirestoreFields(
+  obj: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    out[k] = encodeFirestoreValue(v);
+  }
+  return out;
+}
+
+function encodeFirestoreValue(v: unknown): unknown {
+  if (v === null || v === undefined) return { nullValue: null };
+  if (typeof v === "string") return { stringValue: v };
+  if (typeof v === "boolean") return { booleanValue: v };
+  if (typeof v === "number") {
+    return Number.isInteger(v)
+      ? { integerValue: String(v) }
+      : { doubleValue: v };
+  }
+  if (v instanceof Date) return { timestampValue: v.toISOString() };
+  return { stringValue: String(v) };
+}
+
+/**
  * Permission predicate: returns true iff `callerUid` is allowed to mint a
  * Twilio Video token for a room belonging to `receiverUid`. Two valid
  * cases:

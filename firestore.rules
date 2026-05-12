@@ -64,6 +64,63 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // ── NEW — cameraActivations (Firestore signaling fallback) ───────────
+    // Primary delivery channel for "wake the receiver's camera" requests.
+    // The mobile receiver app subscribes via onSnapshot, so it triggers
+    // even when push notifications can't be delivered (FCM-blocked Android,
+    // missing iOS APNs entitlement, silent mode, low power, etc).
+    //
+    //   • CREATE: any signed-in caller. The /api/video/initiate route writes
+    //     these on the caller's behalf AFTER server-side
+    //     `isPermittedForReceiver` confirms the caller is a permitted
+    //     caregiver. We require callerUid == request.auth.uid to bind the
+    //     row to the verified Firebase identity.
+    //   • READ:   only the receiver may subscribe (receiverUid == auth.uid).
+    //   • UPDATE: only the receiver, and only the `status` / `processedAt`
+    //     fields, so the receiver can mark a row "processed" after handling.
+    //   • DELETE: nobody. Records are kept for the audit trail; a TTL policy
+    //     in the Firebase Console can sweep old rows server-side.
+    match /cameraActivations/{activationId} {
+      // CREATE — strict schema + relationship check. The caller must be
+      // either (a) the receiver themselves, or (b) a permitted caregiver
+      // listed on the receiver's user doc. We check membership against the
+      // denormalized `permittedCaregiverIds: string[]` field (kept in sync
+      // with `permittedCaregivers` at every mutation site) because Firestore
+      // rules cannot iterate map values inside an array of objects.
+      //
+      // This enforces the same authorization at the rule level that the
+      // server's /api/video/initiate route enforces via isPermittedForReceiver
+      // — closing the gap where a malicious client could write directly to
+      // Firestore and bypass the server gate to trigger camera activation
+      // on arbitrary receivers.
+      allow create: if isSignedIn()
+                    && request.resource.data.callerUid == request.auth.uid
+                    && request.resource.data.receiverUid is string
+                    && request.resource.data.roomName is string
+                    && request.resource.data.status == 'pending'
+                    && request.resource.data.createdAt is timestamp
+                    && (
+                         request.resource.data.receiverUid == request.auth.uid
+                         ||
+                         request.auth.uid in
+                           get(/databases/$(database)/documents/users/$(request.resource.data.receiverUid))
+                             .data.permittedCaregiverIds
+                       );
+      allow read:   if isSignedIn()
+                    && resource.data.receiverUid == request.auth.uid;
+      // UPDATE — receiver only, and only the status transition pending->processed
+      // (plus processedAt timestamp). Prevents arbitrary status mutation or
+      // schema tampering that could be used to replay/forge activations.
+      allow update: if isSignedIn()
+                    && resource.data.receiverUid == request.auth.uid
+                    && resource.data.status == 'pending'
+                    && request.resource.data.status == 'processed'
+                    && request.resource.data.diff(resource.data)
+                         .affectedKeys()
+                         .hasOnly(['status', 'processedAt']);
+      allow delete: if false;
+    }
+
     // ── FUTURE — Organization/Medicaid support (v1.1) ────────────────────
     // organizations: B2B account records.
     // Readable by app admin and by org admins of that organization only.
