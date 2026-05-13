@@ -183,7 +183,13 @@ export async function createFirestoreDocAsCaller(
   collectionPath: string,
   fields: Record<string, unknown>,
 ): Promise<string | null> {
-  if (!FIREBASE_PROJECT_ID) return null;
+  if (!FIREBASE_PROJECT_ID) {
+    logger.error(
+      { collectionPath },
+      "createFirestoreDocAsCaller — FIREBASE_PROJECT_ID env var not set on server",
+    );
+    return null;
+  }
   try {
     const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/${collectionPath}`;
     const r = await fetch(url, {
@@ -194,10 +200,27 @@ export async function createFirestoreDocAsCaller(
       },
       body: JSON.stringify({ fields: encodeFirestoreFields(fields) }),
     });
-    if (!r.ok) return null;
+    if (!r.ok) {
+      // Surface the actual Firestore REST error so deployment logs reveal
+      // permission-denied vs schema-invalid vs project-misconfigured. Body
+      // is small (Firestore returns a JSON error envelope) — safe to log.
+      const errBody = await r.text().catch(() => "<unreadable>");
+      logger.error(
+        { collectionPath, status: r.status, body: errBody.slice(0, 800) },
+        "createFirestoreDocAsCaller — Firestore REST rejected the create",
+      );
+      return null;
+    }
     const json = (await r.json()) as { name?: string };
     return json.name ?? null;
-  } catch {
+  } catch (err) {
+    logger.error(
+      {
+        collectionPath,
+        err: err instanceof Error ? err.message : String(err),
+      },
+      "createFirestoreDocAsCaller — network/parse error",
+    );
     return null;
   }
 }
