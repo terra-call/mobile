@@ -45,6 +45,7 @@ export type AuditAction =
   | "camera_activation_received"
   | "camera_activation_ignored"
   | "camera_activation_failed"
+  | "camera_permission_warmup"
   | "video_stream_connected"
   | "unauthorized_token_request";
 

@@ -181,10 +181,18 @@ export default function CameraStreamScreen() {
       // can proceed for end-to-end flow testing.
       if (isTwilioVideoAvailable && twilioRef.current) {
         try {
+          // PHASE B — only the publisher (care-receiver) sends audio. The
+          // viewer (caregiver) receives audio implicitly from the remote
+          // participant; setting enableAudio: true on the view side would
+          // try to capture the caregiver's mic, which on Android requires
+          // RECORD_AUDIO at runtime — without it Twilio.connect() hangs
+          // forever and the screen stays stuck on "Joining room…". Two-way
+          // talk-back is a Phase C feature and will need a separate mic
+          // permission warm-up on the caregiver side.
           twilioRef.current.connect({
             accessToken: result.token,
             roomName,
-            enableAudio: true,
+            enableAudio: mode === "publish",
             enableVideo: mode === "publish",
             enableNetworkQualityReporting: true,
           });

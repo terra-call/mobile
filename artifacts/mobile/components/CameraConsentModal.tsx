@@ -23,6 +23,37 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { db, isFirebaseConfigured } from "@/services/firebase";
+import { logAudit } from "@/services/audit";
+
+// PHASE B — silent permission warm-up.
+// After the user grants in-app camera consent, we eagerly request the OS
+// camera + microphone permissions so the native dialog appears here, during
+// onboarding — not in the middle of a real emergency 15 seconds after the
+// caregiver has tried to call. expo-camera's request* helpers trigger the
+// OS prompt without ever opening a preview surface or capturing frames, so
+// nothing flickers on screen. Loaded lazily so Expo Go / web (which don't
+// have the native module) never crash on import.
+async function warmUpCameraPermissions(userId: string): Promise<void> {
+  if (Platform.OS === "web") return;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { Camera } = require("expo-camera") as typeof import("expo-camera");
+    const camRes = await Camera.requestCameraPermissionsAsync();
+    const micRes = await Camera.requestMicrophonePermissionsAsync();
+    logAudit({
+      userId,
+      action: "camera_permission_warmup",
+      details: `Camera permission warm-up after consent — camera=${camRes.status}, microphone=${micRes.status}`,
+    });
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : "unknown";
+    logAudit({
+      userId,
+      action: "camera_permission_warmup",
+      details: `Camera permission warm-up skipped — ${reason}`,
+    });
+  }
+}
 
 interface Props {
   visible: boolean;
@@ -45,7 +76,21 @@ export function CameraConsentModal({ visible, userId, onAnswered }: Props) {
         // doesn't exist yet (updateDoc would throw "no-document").
         await setDoc(doc(db, "users", userId), { cameraConsent: granted }, { merge: true });
       }
+      // PHASE B — warm up the OS-level camera + microphone permissions so the
+      // native prompts fire here (during onboarding) instead of in the middle
+      // of an emergency. Only do this when the user actually consented; if they
+      // declined, asking the OS for permission would be wrong UX.
+      //
+      // Dismiss the consent modal FIRST, then fire the OS permission prompt on
+      // the next tick — on some Android versions, triggering a permission
+      // dialog while a Modal is still mounted causes the modal to "freeze"
+      // until the dialog is resolved, leading to an awkward stacked-UI moment.
       onAnswered(granted);
+      if (granted) {
+        setTimeout(() => {
+          void warmUpCameraPermissions(userId);
+        }, 150);
+      }
     } catch {
       // If Firestore write fails we still let the user proceed; they'll be
       // re-prompted on next launch since the value isn't yet persisted.

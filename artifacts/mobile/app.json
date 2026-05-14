@@ -82,6 +82,14 @@
           "cameraPermission": "Terra Call uses your camera so a trusted caregiver can see you during an emergency check-in. The camera only activates after you give consent and only when a caregiver initiates an emergency call.",
           "microphonePermission": "Terra Call uses your microphone during emergency video check-ins so you can talk with your caregiver."
         }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Terra Call uses your camera so a trusted caregiver can see you during an emergency check-in. The camera only activates after you give consent and only when a caregiver initiates an emergency call.",
+          "microphonePermission": "Terra Call uses your microphone during emergency video check-ins so you can talk with your caregiver.",
+          "recordAudioAndroid": true
+        }
       ]
     ],
     "experiments": {
