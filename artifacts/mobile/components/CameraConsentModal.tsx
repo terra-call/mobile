@@ -1,9 +1,9 @@
 // TWILIO VIDEO — Phase 2 camera integration
 // ─────────────────────────────────────────────────────────────────────────────
-// One-time consent dialog shown to a care-receiver before their front camera
+// One-time consent dialog shown to a care-recipient before their front camera
 // can be activated remotely during an emergency. Their answer is persisted
 // to Firestore on the user doc as `cameraConsent: boolean`. If they decline,
-// the caregiver will see "Care receiver has not consented" instead of a
+// the caregiver will see "Care recipient has not consented" instead of a
 // camera stream, and the modal will re-prompt on a future launch (we treat
 // "unset" as "ask again" but never re-prompt once the user has answered).
 // ─────────────────────────────────────────────────────────────────────────────

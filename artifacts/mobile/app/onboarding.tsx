@@ -33,14 +33,14 @@ const SLIDES: Slide[] = [
     icon: "shield",
     iconColor: "#00C8FF",
     title: "Real-Time Monitoring",
-    body: "Caregivers see the live status of every care receiver at a glance — checked in, missed, or in need of help.",
+    body: "Caregivers see the live status of every care recipient at a glance — checked in, missed, or in need of help.",
   },
   {
     key: "checkin",
     icon: "check-circle",
     iconColor: "#22FF6E",
     title: "One-Tap Check-Ins",
-    body: "Care receivers tap \"I'M OK\" on a schedule you set. It takes one second and gives everyone peace of mind.",
+    body: "Care recipients tap \"I'M OK\" on a schedule you set. It takes one second and gives everyone peace of mind.",
   },
   {
     key: "alerts",

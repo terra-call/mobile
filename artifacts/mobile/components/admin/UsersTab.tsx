@@ -39,14 +39,14 @@ const ROLE_FILTER_OPTIONS: { value: UserRole | "all"; label: string }[] = [
   { value: "all", label: "All" },
   { value: "admin", label: "Admin" },
   { value: "caregiver", label: "Caregiver" },
-  { value: "care-receiver", label: "Care Receiver" },
+  { value: "care-receiver", label: "Care Recipient" },
   { value: "family", label: "Family" },
 ];
 
 const ROLE_OPTIONS: { value: UserRole; label: string }[] = [
   { value: "admin", label: "Admin" },
   { value: "caregiver", label: "Caregiver" },
-  { value: "care-receiver", label: "Care Receiver" },
+  { value: "care-receiver", label: "Care Recipient" },
   { value: "family", label: "Family" },
 ];
 
@@ -63,7 +63,7 @@ const ORG_ROLE_OPTIONS: {
 const ROLE_LABEL: Record<UserRole, string> = {
   admin: "Admin",
   caregiver: "Caregiver",
-  "care-receiver": "Care Receiver",
+  "care-receiver": "Care Recipient",
   family: "Family",
 };
 

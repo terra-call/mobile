@@ -79,7 +79,7 @@ const splashStyles = StyleSheet.create({
 
 const AUTH_SCREENS = ["login", "register", "onboarding"];
 
-// Register for push notifications when a care receiver logs in
+// Register for push notifications when a care recipient logs in
 function NotificationInitializer() {
   const { user } = useAuth();
   const registeredRef = useRef<string | null>(null);
@@ -95,7 +95,7 @@ function NotificationInitializer() {
 }
 
 // TWILIO VIDEO — Phase 2 camera integration
-// Listens for camera_activate push notifications. When the care-receiver's
+// Listens for camera_activate push notifications. When the care-recipient's
 // device receives one (either while app is foregrounded, or when the user
 // taps the notification), navigate them into the camera-publish screen.
 //
@@ -140,7 +140,7 @@ function CameraActivationListener() {
         logAudit({
           userId: uid,
           action: "camera_activation_received",
-          details: `Care-receiver device received camera_activate push (room=${data.roomName}, from=${data.caregiverName ?? "?"})`,
+          details: `Care-recipient device received camera_activate push (room=${data.roomName}, from=${data.caregiverName ?? "?"})`,
         });
       }
 
@@ -170,7 +170,7 @@ function CameraActivationListener() {
 }
 
 // FIRESTORE SIGNALING FALLBACK — primary delivery path for camera activation.
-// Subscribes to `cameraActivations` docs targeting the current care-receiver
+// Subscribes to `cameraActivations` docs targeting the current care-recipient
 // and triggers the same publish-mode navigation as the push handler. Works on
 // every platform regardless of push-token state (FCM-blocked Android, missing
 // APNs, silent mode, low power, etc) as long as the app is foregrounded or
@@ -228,7 +228,7 @@ function CameraActivationFirestoreListener() {
             logAudit({
               userId: uid,
               action: "camera_activation_received",
-              details: `Care-receiver device received cameraActivations doc (room=${roomName}, from=${data.callerName ?? "?"})`,
+              details: `Care-recipient device received cameraActivations doc (room=${roomName}, from=${data.callerName ?? "?"})`,
             }).catch(() => {});
           }
 

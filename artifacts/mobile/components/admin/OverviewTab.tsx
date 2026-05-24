@@ -224,7 +224,7 @@ export default function OverviewTab() {
       <Card icon="users" title="User Metrics">
         <View style={shared.row}>
           <Stat value={users?.total ?? 0} label="Total Users" />
-          <Stat value={users?.careReceivers ?? 0} label="Care Receivers" />
+          <Stat value={users?.careReceivers ?? 0} label="Care Recipients" />
           <Stat value={users?.caregivers ?? 0} label="Caregivers" />
         </View>
         <View style={shared.row}>

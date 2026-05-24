@@ -147,7 +147,7 @@ function ReportList({
           <Feather name="file-text" size={36} color={COLORS.MUTED} />
           <Text style={s.emptyTitle}>No reports yet</Text>
           <Text style={s.emptyText}>
-            Generate your first care-activity report to roll up a care receiver's
+            Generate your first care-activity report to roll up a care recipient's
             check-ins, missed responses, and alerts over a date range.
           </Text>
         </View>
@@ -272,7 +272,7 @@ function GenerateForm({
     if (!actor) return;
     setValidationError(null);
     if (!selectedUser) {
-      setValidationError("Select a care receiver first.");
+      setValidationError("Select a care recipient first.");
       return;
     }
     const start = parseInputDate(startDate);
@@ -379,7 +379,7 @@ function GenerateForm({
           <Text style={s.formTitle}>Generate Care Report</Text>
         </View>
 
-        <FormCard title="1. Care Receiver" icon="user">
+        <FormCard title="1. Care Recipient" icon="user">
           {loadingUsers ? (
             <ActivityIndicator color={COLORS.TEAL} />
           ) : (
@@ -658,7 +658,7 @@ function ReportDetail({
         {report.organizationId && (
           <DetailRow label="Organization" value={report.organizationId} />
         )}
-        <DetailRow label="Care receiver ID" value={report.careReceiverId} />
+        <DetailRow label="Care recipient ID" value={report.careReceiverId} />
       </FormCard>
 
       <View style={s.exportRow}>

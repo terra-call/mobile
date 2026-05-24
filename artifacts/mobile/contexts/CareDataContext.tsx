@@ -207,7 +207,7 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
     }
   }, [user]);
 
-  // ── Care receiver status monitor (alerts caregivers when windows are exceeded)
+  // ── Care recipient status monitor (alerts caregivers when windows are exceeded)
   useEffect(() => {
     if (!user || user.role !== "care-receiver" || !lastCheckIn) return;
 
@@ -231,7 +231,7 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
       const diffMin = (Date.now() - ts) / 60000;
 
       const caregivers = permittedCaregiversRef.current;
-      const receiverName = user.name ?? "Your care receiver";
+      const receiverName = user.name ?? "Your care recipient";
 
       // Fetch push tokens + phone numbers in one batch
       const contacts = await getCaregiverContacts(caregivers);
@@ -245,7 +245,7 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
           await sendExpoPushNotification(
             cgTokens,
             "🚨 Terra Call — Emergency Alert",
-            "A care receiver has not checked in. Open the app for details.",
+            "A care recipient has not checked in. Open the app for details.",
             { type: "emergency", userId: user.id, receiverName }
           );
         }
@@ -268,7 +268,7 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
           await sendExpoPushNotification(
             cgTokens,
             "⚠️ Terra Call — Missed Check-In",
-            "A care receiver missed their scheduled check-in. Open the app for details.",
+            "A care recipient missed their scheduled check-in. Open the app for details.",
             { type: "missed", userId: user.id, receiverName }
           );
         }
@@ -319,17 +319,17 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
     callNotifyApi("/notify/checkin", { userId: user.id, checkedInAt: now }).catch(() => {});
 
     // Log event for the admin dashboard
-    logEvent(user.id, user.name ?? "Care Receiver", "checkin").catch(() => {});
+    logEvent(user.id, user.name ?? "Care Recipient", "checkin").catch(() => {});
 
     // HIPAA audit
     logAudit({
       userId: user.id,
       action: "checkin",
-      details: "Care receiver recorded a check-in",
+      details: "Care recipient recorded a check-in",
     }).catch(() => {});
   }, [user]);
 
-  // I'M NOT OK — manually triggered emergency by care receiver
+  // I'M NOT OK — manually triggered emergency by care recipient
   // Bypasses check-in timer entirely — immediate alert to caregiver.
   // Routes everything through the API server so that:
   //   1. Push + SMS go out atomically (single source of truth)
@@ -338,7 +338,7 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
   //   3. We have a server-side log of what was actually delivered
   const triggerEmergency = useCallback(async () => {
     if (!user) return;
-    const receiverName = user.name ?? "Care Receiver";
+    const receiverName = user.name ?? "Care Recipient";
 
     // Mark status in Firestore so caregiver dashboards update in real time.
     // Also read smsConsent so we know whether to include SMS in the fallback.
@@ -359,7 +359,7 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
     logAudit({
       userId: user.id,
       action: "alert_im_not_ok",
-      details: `Care receiver pressed I'M NOT OK (${receiverName})`,
+      details: `Care recipient pressed I'M NOT OK (${receiverName})`,
     }).catch(() => {});
 
     const contacts = await getCaregiverContacts(permittedCaregiversRef.current);
@@ -381,7 +381,7 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
         await sendExpoPushNotification(
           cgTokens,
           "🚨 Terra Call — Emergency Alert",
-          "A care receiver needs help immediately. Open the app to respond.",
+          "A care recipient needs help immediately. Open the app to respond.",
           { type: "manual_emergency", userId: user.id, receiverName }
         );
       }

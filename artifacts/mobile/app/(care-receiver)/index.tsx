@@ -209,7 +209,7 @@ export default function CareReceiverHome() {
   }, []);
 
   // TWILIO VIDEO — Phase 2 camera integration
-  // Check if the care-receiver has answered the camera-consent prompt yet.
+  // Check if the care-recipient has answered the camera-consent prompt yet.
   // Shows the modal once if cameraConsent is missing on their user doc.
   // If the doc itself is missing (edge case: user created via auth but never
   // had a profile written), still show the modal — answering it will create
@@ -248,7 +248,7 @@ export default function CareReceiverHome() {
     }
   };
 
-  // I'M NOT OK — manually triggered emergency by care receiver
+  // I'M NOT OK — manually triggered emergency by care recipient
   // Bypasses check-in timer entirely — immediate alert to caregiver
   const handleEmergencyAlert = () => {
     Alert.alert(

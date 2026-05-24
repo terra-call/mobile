@@ -153,7 +153,7 @@ service cloud.firestore {
     // ── FUTURE — Organization/Medicaid support (v1.1) ────────────────────
     // careReports: periodic care-activity rollups.
     // Readable by:
-    //   • the care receiver themselves
+    //   • the care recipient themselves
     //   • any caregiver listed in caregiverIds
     //   • the organization admin of report.organizationId
     //   • the app admin

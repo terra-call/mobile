@@ -114,7 +114,7 @@ export async function sendEmergencyAlert(
   // The receiver's name is sent only in `data`, which the app can read once
   // unlocked and authenticated.
   const title = "🚨 Terra Call — Emergency Alert";
-  const body = "A care receiver needs help immediately. Open the app to respond.";
+  const body = "A care recipient needs help immediately. Open the app to respond.";
 
   // Suppress any pending scheduler-driven missed/escalation alerts for this user
   markEmergency(userId);
@@ -214,7 +214,7 @@ async function tick(): Promise<void> {
       await sendPush(
         entry.caregiverTokens,
         "🚨 Terra Call — Emergency Alert",
-        "A care receiver has not checked in. Open the app for details.",
+        "A care recipient has not checked in. Open the app for details.",
         { type: "emergency", userId, receiverName: entry.receiverName }
       );
 
@@ -247,7 +247,7 @@ async function tick(): Promise<void> {
       await sendPush(
         entry.caregiverTokens,
         "⚠️ Terra Call — Missed Check-In",
-        "A care receiver missed their scheduled check-in. Open the app for details.",
+        "A care recipient missed their scheduled check-in. Open the app for details.",
         { type: "missed", userId, receiverName: entry.receiverName }
       );
 

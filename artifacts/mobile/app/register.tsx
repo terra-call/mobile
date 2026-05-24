@@ -37,7 +37,7 @@ const ROLE_OPTIONS: RoleOption[] = [
   },
   {
     role: "care-receiver",
-    title: "Care Receiver",
+    title: "Care Recipient",
     description: "I check in so my caregiver knows I'm safe",
     icon: "heart",
     accentColor: "#22FF6E",

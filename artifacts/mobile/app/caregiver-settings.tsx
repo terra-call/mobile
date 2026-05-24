@@ -63,7 +63,7 @@ export default function CaregiverSettingsScreen() {
   const [showCurrentPass, setShowCurrentPass] = useState(false);
   const [showNewPass, setShowNewPass] = useState(false);
 
-  // Linked care receivers
+  // Linked care recipients
   const [receivers, setReceivers] = useState<LinkedReceiver[]>([]);
   const [receiversLoading, setReceiversLoading] = useState(true);
 
@@ -97,7 +97,7 @@ export default function CaregiverSettingsScreen() {
     if (!user || !inviteCode) return;
     const phone = invitePhone.trim();
     if (phone.length < 7) {
-      Alert.alert("Phone Required", "Enter the care receiver's phone number to text them the code.");
+      Alert.alert("Phone Required", "Enter the care recipient's phone number to text them the code.");
       return;
     }
     setInviteSmsSending(true);
@@ -120,7 +120,7 @@ export default function CaregiverSettingsScreen() {
     }
   };
 
-  // ── Load care receivers that have this caregiver in their permittedCaregivers ──
+  // ── Load care recipients that have this caregiver in their permittedCaregivers ──
   useEffect(() => {
     if (!user || !isFirebaseConfigured || !db) {
       setReceiversLoading(false);
@@ -137,7 +137,7 @@ export default function CaregiverSettingsScreen() {
           if (permitted.some((cg) => cg.id === user.id)) {
             linked.push({
               id: d.id,
-              name: data.name ?? "Care Receiver",
+              name: data.name ?? "Care Recipient",
               email: data.email ?? "",
               permittedCaregivers: permitted,
             });
@@ -149,7 +149,7 @@ export default function CaregiverSettingsScreen() {
       .finally(() => setReceiversLoading(false));
   }, [user]);
 
-  // ── Remove self from a care receiver's permitted list ─────────────────────
+  // ── Remove self from a care recipient's permitted list ─────────────────────
   const removeSelf = (receiver: LinkedReceiver) => {
     Alert.alert(
       "Stop Monitoring",
@@ -349,9 +349,9 @@ export default function CaregiverSettingsScreen() {
           </View>
         </View>
 
-        {/* ── Invite a Care Receiver ── */}
+        {/* ── Invite a Care Recipient ── */}
         <View style={styles.section}>
-          <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>INVITE A CARE RECEIVER</Text>
+          <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>INVITE A CARE RECIPIENT</Text>
           <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <Text style={[styles.sectionNote, { color: colors.mutedForeground }]}>
               Generate a 6-digit code, then share it with the person you want to monitor. They enter it in their app to link with you. The code expires in 24 hours.
@@ -406,9 +406,9 @@ export default function CaregiverSettingsScreen() {
           </View>
         </View>
 
-        {/* ── My Care Receivers ── */}
+        {/* ── My Care Recipients ── */}
         <View style={styles.section}>
-          <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>MY CARE RECEIVERS</Text>
+          <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>MY CARE RECIPIENTS</Text>
           <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <Text style={[styles.sectionNote, { color: colors.mutedForeground }]}>
               These are the people whose check-ins you are monitoring.
@@ -420,7 +420,7 @@ export default function CaregiverSettingsScreen() {
               <View style={[styles.emptyCard, { borderColor: colors.border }]}>
                 <Feather name="user-x" size={22} color={colors.mutedForeground} />
                 <Text style={[styles.emptyText, { color: colors.mutedForeground }]}>
-                  Not linked to any care receivers yet
+                  Not linked to any care recipients yet
                 </Text>
               </View>
             ) : (

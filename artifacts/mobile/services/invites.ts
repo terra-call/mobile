@@ -77,7 +77,7 @@ export async function createInvite(caregiver: {
   throw new Error("Could not generate a unique invite code");
 }
 
-// ── Care receiver: redeem an invite code ─────────────────────────────────────
+// ── Care recipient: redeem an invite code ─────────────────────────────────────
 export type RedeemResult =
   | { ok: true; caregiver: PermittedCaregiver }
   | { ok: false; reason: "not-found" | "expired" | "redeemed" | "self" | "duplicate" | "error" };

@@ -35,7 +35,7 @@ export const VIDEO_TOKEN_ERROR_MESSAGE =
 
 export type CameraConsent = "granted" | "denied" | "unset";
 
-/** Read the camera-consent value stored on a care-receiver's user doc. */
+/** Read the camera-consent value stored on a care-recipient's user doc. */
 export async function getCameraConsent(receiverId: string): Promise<CameraConsent> {
   if (!isFirebaseConfigured || !db) return "unset";
   try {
@@ -58,7 +58,7 @@ export function buildVideoRoomName(receiverId: string): string {
 
 /**
  * Tell the server to push a "camera_activate" notification to the
- * care-receiver's device. The receiver's app picks this up via the
+ * care-recipient's device. The receiver's app picks this up via the
  * notification listener and navigates to the camera-publish screen.
  *
  * SECURITY — sends the caller's Firebase ID token in the Authorization
@@ -75,7 +75,7 @@ export async function initiateCameraActivation(input: {
   receiverName: string;
   caregiverName: string;
   roomName: string;
-  /** uid of the care-receiver — used by the server for permission check. */
+  /** uid of the care-recipient — used by the server for permission check. */
   targetUserId: string;
 }): Promise<{ ok: boolean; videoConfigured?: boolean; error?: string }> {
   if (!API_BASE) return { ok: false, error: "API server URL not configured" };
@@ -143,7 +143,7 @@ export type VideoTokenResult = VideoTokenSuccess | VideoTokenFailure;
  * Mint a short-lived Twilio Video access token for the requesting client.
  * The same endpoint is used by both sides of an emergency video session:
  *   • caregiver — joins the room as a subscriber/viewer
- *   • care-receiver — joins the room as a publisher (front camera)
+ *   • care-recipient — joins the room as a publisher (front camera)
  *
  * SECURITY — every request includes the caller's Firebase ID token in the
  * Authorization header. The server verifies it cryptographically and uses
@@ -156,7 +156,7 @@ export type VideoTokenResult = VideoTokenSuccess | VideoTokenFailure;
  *
  * @param identity      stable per-user identifier — caregiver uid or receiver uid
  * @param roomName      deterministic emergency room name from buildVideoRoomName
- * @param targetUserId  uid of the OTHER party in the room (the care-receiver
+ * @param targetUserId  uid of the OTHER party in the room (the care-recipient
  *                      whose room this is). Used by the server for
  *                      permittedCaregivers permission check.
  * @param auditUserId   the uid to attribute the audit-log entry to (optional)
@@ -269,7 +269,7 @@ export async function requestVideoToken(input: {
   }
 }
 
-/** Fetch a care-receiver's Expo push token from Firestore. */
+/** Fetch a care-recipient's Expo push token from Firestore. */
 export async function getReceiverPushToken(receiverId: string): Promise<string | null> {
   if (!isFirebaseConfigured || !db) return null;
   try {

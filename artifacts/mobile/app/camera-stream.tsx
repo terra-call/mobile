@@ -1,7 +1,7 @@
 // TWILIO VIDEO — Phase 2 camera integration (LIVE)
 // ─────────────────────────────────────────────────────────────────────────────
 // Single-screen component used by both sides of an emergency video session:
-//   • mode=publish  → care-receiver, activates front camera and joins the room
+//   • mode=publish  → care-recipient, activates front camera and joins the room
 //   • mode=view     → caregiver, joins the room as a subscriber
 //
 // The actual SDK (`@twilio/video-react-native-sdk`) is loaded through the
@@ -77,7 +77,7 @@ export default function CameraStreamScreen() {
   const otherPartyName =
     mode === "publish"
       ? params.caregiverName ?? "Your caregiver"
-      : params.receiverName ?? "Care receiver";
+      : params.receiverName ?? "Care recipient";
 
   const [connecting, setConnecting] = useState(true);
   const [tokenError, setTokenError] = useState<string | null>(null);
@@ -123,7 +123,7 @@ export default function CameraStreamScreen() {
       // The same /api/video/token endpoint serves both sides. Identity is
       // re-derived server-side from the verified Firebase uid; we send it
       // here only for the local audit log. `targetUserId` is the room's
-      // care-receiver — for the publish side that's the signed-in user
+      // care-recipient — for the publish side that's the signed-in user
       // themselves, for the view side it's the receiverId param passed in
       // from emergency-call.tsx. The server uses targetUserId to enforce
       // the permittedCaregivers permission check.
@@ -226,7 +226,7 @@ export default function CameraStreamScreen() {
           logAudit({
             userId: user.id,
             action: "video_stream_connected",
-            details: `${mode === "publish" ? "Care-receiver" : "Caregiver"} reached camera-stream room ${roomName} (placeholder mode — no native SDK)`,
+            details: `${mode === "publish" ? "Care-recipient" : "Caregiver"} reached camera-stream room ${roomName} (placeholder mode — no native SDK)`,
             targetUserId: receiverId ?? undefined,
           });
         }
@@ -260,7 +260,7 @@ export default function CameraStreamScreen() {
         logAudit({
           userId: user.id,
           action: "video_stream_connected",
-          details: `${mode === "publish" ? "Care-receiver" : "Caregiver"} connected to Twilio Video room ${roomName}`,
+          details: `${mode === "publish" ? "Care-recipient" : "Caregiver"} connected to Twilio Video room ${roomName}`,
           targetUserId: receiverId ?? undefined,
         });
       }
@@ -374,7 +374,7 @@ export default function CameraStreamScreen() {
       logAudit({
         userId: user.id,
         action: "emergency_call_resolved",
-        details: `${mode === "publish" ? "Care-receiver" : "Caregiver"} ended the live stream (room=${roomName})`,
+        details: `${mode === "publish" ? "Care-recipient" : "Caregiver"} ended the live stream (room=${roomName})`,
         targetUserId: receiverId ?? undefined,
       });
     }
@@ -438,7 +438,7 @@ export default function CameraStreamScreen() {
             <Text style={styles.placeholderSub}>Joining room {roomName.slice(-6) || "—"}</Text>
           </View>
         ) : showRealVideo && roomConnected ? (
-          // Real Twilio video rendering. Care-receiver sees their own
+          // Real Twilio video rendering. Care-recipient sees their own
           // front camera; caregiver sees the receiver's remote track.
           mode === "publish" && TwilioVideoLocalView ? (
             <TwilioVideoLocalView enabled={true} style={styles.videoView} scaleType="fill" />

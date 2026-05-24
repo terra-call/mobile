@@ -3,7 +3,7 @@
 // These routes scaffold the Twilio Programmable Video flow used by the
 // "Call Their Device" emergency button. When a caregiver's call is unanswered
 // for 15 seconds, the mobile app calls /api/video/initiate which:
-//   1. Sends an Expo push to the care-receiver's device asking it to activate
+//   1. Sends an Expo push to the care-recipient's device asking it to activate
 //      the front camera and join a Twilio Video room
 //   2. Returns the room name + a fresh access token to the caregiver so the
 //      caregiver app can join the same room as a subscriber
@@ -163,7 +163,7 @@ router.post(
  * SECURITY — Firebase ID token auth on video endpoint
  * Required before App Store submission
  * Prevents unauthorized push-notification dispatch (would otherwise let any
- * unauth'd caller spam care-receivers with "your camera is being activated"
+ * unauth'd caller spam care-recipients with "your camera is being activated"
  * pushes — a serious abuse vector and HIPAA red flag).
  *
  * Headers: `Authorization: Bearer <Firebase ID token>`  (REQUIRED)
@@ -262,7 +262,7 @@ router.post(
         receiverUid: targetUserId,
         callerUid: auth.uid,
         callerName: caregiverName ?? "Caregiver",
-        receiverName: receiverName ?? "Care receiver",
+        receiverName: receiverName ?? "Care recipient",
         roomName,
         status: "pending",
         createdAt: new Date(),

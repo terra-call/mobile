@@ -32,7 +32,7 @@ export default function CaregiverDashboard() {
   const [filter, setFilter] = useState<FilterType>("all");
   const [refreshing, setRefreshing] = useState(false);
 
-  // HIPAA audit — log once per session when caregiver loads care-receiver data.
+  // HIPAA audit — log once per session when caregiver loads care-recipient data.
   // Debounced via ref so we don't write a row on every re-render.
   const dataAccessAuditedRef = useRef(false);
   useEffect(() => {
@@ -42,7 +42,7 @@ export default function CaregiverDashboard() {
     logAudit({
       userId: user.id,
       action: "data_accessed",
-      details: `Caregiver opened dashboard, viewing ${careReceivers.length} care receiver(s)`,
+      details: `Caregiver opened dashboard, viewing ${careReceivers.length} care recipient(s)`,
     }).catch(() => {});
   }, [user, careReceivers.length]);
 
@@ -188,16 +188,16 @@ export default function CaregiverDashboard() {
               <View style={[styles.emptyIcon, { backgroundColor: colors.card, borderColor: colors.border }]}>
                 <Feather name="user-plus" size={36} color={colors.accent} />
               </View>
-              <Text style={[styles.emptyTitle, { color: colors.text }]}>No Care Receivers Yet</Text>
+              <Text style={[styles.emptyTitle, { color: colors.text }]}>No Care Recipients Yet</Text>
               <Text style={[styles.emptyBody, { color: colors.mutedForeground }]}>
-                Share the app with the person you're monitoring. They sign up as a Care Receiver and add your email as their caregiver.
+                Share the app with the person you're monitoring. They sign up as a Care Recipient and add your email as their caregiver.
               </Text>
               <Pressable
                 style={[styles.inviteBtn, { backgroundColor: colors.accent }]}
                 onPress={() => {
                   Alert.alert(
-                    "Invite a Care Receiver",
-                    "Have them download Terra Call, sign up as a Care Receiver, and add your email address:\n\n" + (user?.email ?? "your email") + "\n\nThey'll appear on your dashboard automatically.",
+                    "Invite a Care Recipient",
+                    "Have them download Terra Call, sign up as a Care Recipient, and add your email address:\n\n" + (user?.email ?? "your email") + "\n\nThey'll appear on your dashboard automatically.",
                     [{ text: "Got it" }]
                   );
                 }}

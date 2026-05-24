@@ -174,7 +174,7 @@ export default function EmergencyCallScreen() {
       // Pass token if we have one (push wakeup) — server tolerates absence
       // and falls back to Firestore signaling, which always works.
       receiverPushToken: pushToken ?? undefined,
-      receiverName: receiverName ?? "Care receiver",
+      receiverName: receiverName ?? "Care recipient",
       caregiverName: user?.name ?? "Caregiver",
       roomName,
       // Pass receiver uid so the server can verify caller has permission.
@@ -230,7 +230,7 @@ export default function EmergencyCallScreen() {
       params: {
         mode: "view",
         roomName,
-        receiverName: receiverName ?? "Care receiver",
+        receiverName: receiverName ?? "Care recipient",
         receiverId,
         eventId: eventIdRef.current ?? "",
       },
@@ -249,7 +249,7 @@ export default function EmergencyCallScreen() {
     if (!receiverPhone || !receiverPhone.trim()) {
       Alert.alert(
         "No Phone Number",
-        `${receiverName ?? "This care receiver"} hasn't added a phone number to their profile yet.`
+        `${receiverName ?? "This care recipient"} hasn't added a phone number to their profile yet.`
       );
       return;
     }
@@ -353,7 +353,7 @@ export default function EmergencyCallScreen() {
           <View style={styles.receiverAvatar}>
             <Feather name="user" size={44} color="#FF3B30" />
           </View>
-          <Text style={styles.receiverName}>{receiverName ?? "Care Receiver"}</Text>
+          <Text style={styles.receiverName}>{receiverName ?? "Care Recipient"}</Text>
           <Text style={styles.receiverStatus}>Requires immediate assistance</Text>
 
           {/* TWILIO VIDEO — Phase 2 camera integration: state banners */}
@@ -407,7 +407,7 @@ export default function EmergencyCallScreen() {
             <View style={styles.noConsentBanner}>
               <Feather name="x-circle" size={14} color="#FFB347" />
               <Text style={styles.noConsentText}>
-                {receiverName ?? "This care receiver"} has not consented to camera activation
+                {receiverName ?? "This care recipient"} has not consented to camera activation
               </Text>
             </View>
           )}

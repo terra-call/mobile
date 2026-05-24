@@ -142,7 +142,7 @@ router.post("/notify/emergency", async (req, res) => {
   res.json({ ok: true, ...result });
 });
 
-// ── Register or update a care receiver's check-in schedule ───────────────────
+// ── Register or update a care recipient's check-in schedule ───────────────────
 router.post("/notify/schedule", (req, res) => {
   const body = req.body as {
     userId: string;

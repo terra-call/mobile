@@ -207,7 +207,7 @@ export default function SettingsScreen() {
       logAudit({
         userId: user.id,
         action: "profile_updated",
-        details: "Care receiver updated name/phone",
+        details: "Care recipient updated name/phone",
       }).catch(() => {});
       Alert.alert("Saved", "Your profile has been updated.");
     } catch {
@@ -363,7 +363,7 @@ export default function SettingsScreen() {
           const cgPhones = await getCaregiverPhones(caregivers);
           await callNotifyApi("/notify/schedule", {
             userId: user.id,
-            receiverName: user.name ?? "Care Receiver",
+            receiverName: user.name ?? "Care Recipient",
             scheduleType: scheduleType,
             customHour,
             customMinute,
