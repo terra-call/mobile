@@ -59,6 +59,10 @@ export default function CameraStreamScreen() {
     caregiverName?: string;
     receiverId?: string;
     eventId?: string;
+    // RECIPIENT-INITIATED CALL ONLY — the cameraActivations docId. Server
+    // requires it for tc-call-* rooms to bind token minting to the signaled
+    // 1:1 participants. Absent for tc-emrg-* emergency rooms.
+    activationDocId?: string;
   }>();
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === "web" ? 67 : insets.top;
@@ -151,6 +155,7 @@ export default function CameraStreamScreen() {
         roomName,
         targetUserId,
         auditUserId: user?.id,
+        activationDocId: params.activationDocId,
       });
 
       if (cancelled) return;

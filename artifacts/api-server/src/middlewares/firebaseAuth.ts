@@ -178,6 +178,30 @@ export async function fetchUserDocAsCaller(
  * fallback for devices that can't receive push notifications (Android FCM
  * blocked by org policy, app force-killed, silent mode, low power, etc).
  */
+/**
+ * Helper: forward the caller's ID token to the Firestore REST API to read
+ * ANY document by collection + docId. Mirrors fetchUserDocAsCaller but is
+ * generic so callers can fetch e.g. cameraActivations docs without exposing
+ * a new collection-specific helper. Returns null on any failure.
+ */
+export async function fetchFirestoreDocAsCaller(
+  callerIdToken: string,
+  collectionPath: string,
+  docId: string,
+): Promise<Record<string, unknown> | null> {
+  if (!FIREBASE_PROJECT_ID) return null;
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/${collectionPath}/${encodeURIComponent(docId)}`;
+    const r = await fetch(url, {
+      headers: { Authorization: `Bearer ${callerIdToken}` },
+    });
+    if (!r.ok) return null;
+    return (await r.json()) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 export async function createFirestoreDocAsCaller(
   callerIdToken: string,
   collectionPath: string,

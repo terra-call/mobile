@@ -47,7 +47,13 @@ export type AuditAction =
   | "camera_activation_failed"
   | "camera_permission_warmup"
   | "video_stream_connected"
-  | "unauthorized_token_request";
+  | "unauthorized_token_request"
+  // Recipient-initiated call flow ("Call My Caregiver" button)
+  | "recipient_initiated_call"
+  | "recipient_call_answered"
+  | "recipient_call_declined"
+  | "recipient_call_unavailable"
+  | "recipient_call_cancelled";
 
 export interface LogAuditParams {
   userId: string;

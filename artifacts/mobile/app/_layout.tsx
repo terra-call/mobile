@@ -25,6 +25,11 @@ import {
   type Timestamp,
 } from "firebase/firestore";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import {
+  IncomingCallModal,
+  navigateToCallSubscribe,
+  type IncomingCall,
+} from "@/components/IncomingCallModal";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { CareDataProvider } from "@/contexts/CareDataContext";
 import { STORAGE_KEYS } from "@/constants/storage";
@@ -260,6 +265,146 @@ function CameraActivationFirestoreListener() {
   return null;
 }
 
+// RECIPIENT-INITIATED CALL FLOW — caregiver-side listener
+// Subscribes to cameraActivations docs where caregiverId == this caregiver's
+// uid and initiatedBy == "recipient" and status == "pending". Shows the
+// IncomingCallModal globally so it surfaces over any caregiver screen.
+//
+// NOT an emergency: no countdown, no SMS, no escalation. Pure call-and-answer.
+function IncomingCallListener() {
+  const { user } = useAuth();
+  const [incoming, setIncoming] = useState<IncomingCall | null>(null);
+  const sessionStartRef = useRef<number>(Date.now());
+  const handledRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    sessionStartRef.current = Date.now();
+    handledRef.current = new Set();
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+    if (!user || user.role !== "caregiver") return;
+    if (!isFirebaseConfigured || !db) return;
+
+    const q = query(
+      collection(db, "cameraActivations"),
+      where("caregiverId", "==", user.id),
+      where("initiatedBy", "==", "recipient"),
+    );
+
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        snap.docChanges().forEach((change) => {
+          if (change.type === "removed") return;
+          const data = change.doc.data() as {
+            status?: string;
+            roomName?: string;
+            recipientId?: string;
+            recipientName?: string;
+            callerName?: string;
+            createdAt?: Timestamp;
+          };
+          // Drop the modal if the caregiver dismissed elsewhere or doc no
+          // longer pending (answered/declined/cancelled).
+          if (data.status !== "pending") {
+            setIncoming((cur) => (cur?.docId === change.doc.id ? null : cur));
+            return;
+          }
+          if (handledRef.current.has(change.doc.id)) return;
+
+          // Skip docs whose ring window has already elapsed. We use the
+          // doc's own age (vs. the recipient's 45s CALL_TIMEOUT_MS plus 15s
+          // slack for clock skew / network), NOT app-session start —
+          // otherwise a legitimate in-flight call started while the caregiver
+          // was on another screen would be dropped on reopen and the
+          // recipient would falsely see "No answer".
+          const createdAtMs = data.createdAt?.toMillis?.() ?? 0;
+          const STALE_AFTER_MS = 60_000;
+          if (createdAtMs && Date.now() - createdAtMs > STALE_AFTER_MS) {
+            handledRef.current.add(change.doc.id);
+            return;
+          }
+          if (!data.roomName || !data.recipientId) return;
+
+          handledRef.current.add(change.doc.id);
+          setIncoming({
+            docId: change.doc.id,
+            recipientId: data.recipientId,
+            recipientName: data.recipientName ?? data.callerName ?? "Care recipient",
+            roomName: data.roomName,
+          });
+        });
+      },
+      () => {
+        // Silent failure — permissions errors etc. Caregiver simply won't see
+        // the incoming call modal; the recipient will time out and surface
+        // "Caregiver unavailable".
+      },
+    );
+
+    return () => unsub();
+  }, [user?.id, user?.role]);
+
+  const handleAnswer = async (call: IncomingCall) => {
+    if (!isFirebaseConfigured || !db) return;
+    setIncoming(null);
+    try {
+      const { doc, updateDoc } = await import("firebase/firestore");
+      await updateDoc(doc(db, "cameraActivations", call.docId), {
+        status: "answered",
+        respondedAt: serverTimestamp(),
+      });
+    } catch {
+      // Best-effort: still navigate the caregiver into the room even if the
+      // status write failed — the recipient will time out and bail if needed.
+    }
+    if (user) {
+      logAudit({
+        userId: user.id,
+        action: "recipient_call_answered",
+        details: `Caregiver answered recipient-initiated call (room=${call.roomName}, from=${call.recipientName})`,
+        targetUserId: call.recipientId,
+      }).catch(() => {});
+    }
+    // Forward the cameraActivations docId so camera-stream's token request
+    // can satisfy /api/video/token's tc-call binding check (server verifies
+    // caller is the signaled caregiverId on this exact activation doc).
+    navigateToCallSubscribe({ ...call, activationDocId: call.docId });
+  };
+
+  const handleDecline = async (call: IncomingCall) => {
+    if (!isFirebaseConfigured || !db) return;
+    setIncoming(null);
+    try {
+      const { doc, updateDoc } = await import("firebase/firestore");
+      await updateDoc(doc(db, "cameraActivations", call.docId), {
+        status: "declined",
+        respondedAt: serverTimestamp(),
+      });
+    } catch {
+      // Best-effort.
+    }
+    if (user) {
+      logAudit({
+        userId: user.id,
+        action: "recipient_call_declined",
+        details: `Caregiver declined recipient-initiated call (room=${call.roomName}, from=${call.recipientName})`,
+        targetUserId: call.recipientId,
+      }).catch(() => {});
+    }
+  };
+
+  return (
+    <IncomingCallModal
+      call={incoming}
+      onAnswer={handleAnswer}
+      onDecline={handleDecline}
+    />
+  );
+}
+
 function NavigationGuard() {
   const { user, loading } = useAuth();
   const segments = useSegments();
@@ -325,6 +470,7 @@ function RootLayoutNav() {
       <NotificationInitializer />
       <CameraActivationListener />
       <CameraActivationFirestoreListener />
+      <IncomingCallListener />
       <Stack
         screenOptions={{
           headerShown: false,

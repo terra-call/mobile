@@ -4,6 +4,7 @@ import * as Haptics from "expo-haptics";
 import { router } from "expo-router";
 import React, { useEffect, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Alert,
   Animated,
   Linking,
@@ -16,16 +17,33 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { collection, doc, getDoc, getDocs, query, where } from "firebase/firestore";
+import {
+  doc,
+  getDoc,
+  onSnapshot,
+  serverTimestamp,
+  updateDoc,
+} from "firebase/firestore";
 import { CameraConsentModal } from "@/components/CameraConsentModal";
 import { CheckInButton } from "@/components/CheckInButton";
 import { NotificationPermissionPrompt } from "@/components/NotificationPermissionPrompt";
 import { useAuth } from "@/contexts/AuthContext";
 import { useCareData } from "@/contexts/CareDataContext";
 import { useColors } from "@/hooks/useColors";
+import { logAudit } from "@/services/audit";
 import { db, isFirebaseConfigured } from "@/services/firebase";
 import { registerForPushNotifications } from "@/services/notifications";
+import { buildCallRoomName, initiateReceiverCall } from "@/services/video";
 import { formatTimeAgo } from "@/utils/time";
+
+// Color for "Call My Caregiver" button — medium blue, deliberately NOT the
+// destructive red used by I'M NOT OK so users understand this is a routine
+// call and not an emergency.
+const CALL_BLUE = "#5391ce";
+
+// How long to wait for the caregiver to answer before giving up and showing
+// "No answer". 45s mirrors typical iOS/Android incoming call ring duration.
+const CALL_TIMEOUT_MS = 45_000;
 
 function EmergencyModal({
   visible,
@@ -174,6 +192,14 @@ function EmergencyModal({
   );
 }
 
+type CallState =
+  | { phase: "idle" }
+  // `docId` is the cameraActivations doc id returned by the server route;
+  // we never enter `calling` without it (avoids onSnapshot(doc(db,col,""))
+  // throwing on an empty reference).
+  | { phase: "calling"; docId: string; roomName: string }
+  | { phase: "unavailable"; reason: "declined" | "no_answer" | "error"; message: string };
+
 export default function CareReceiverHome() {
   const { user, logout } = useAuth();
   const { lastCheckIn, checkInHistory, checkIn, triggerEmergency } = useCareData();
@@ -183,9 +209,16 @@ export default function CareReceiverHome() {
   const [showEmergency, setShowEmergency] = useState(false);
   const [caregiverName, setCaregiverName] = useState<string | null>(null);
   const [caregiverPhone, setCaregiverPhone] = useState<string | null>(null);
+  const [caregiverId, setCaregiverId] = useState<string | null>(null);
+  // `resolvingCaregiver` is true while we read the recipient's own user doc
+  // to find their linked caregiver. Used to disable the call button so a
+  // user can't tap it during the brief async window and see a spurious "No
+  // Caregiver Linked" alert when one actually exists.
+  const [resolvingCaregiver, setResolvingCaregiver] = useState(true);
   const confirmScale = useRef(new Animated.Value(0)).current;
   const confirmOpacity = useRef(new Animated.Value(0)).current;
   const [emergencySending, setEmergencySending] = useState(false);
+  const [callState, setCallState] = useState<CallState>({ phase: "idle" });
 
   // TWILIO VIDEO — Phase 2 camera integration: one-time consent prompt
   const [consentNeeded, setConsentNeeded] = useState(false);
@@ -193,20 +226,195 @@ export default function CareReceiverHome() {
   const topPadding = Platform.OS === "web" ? 67 : insets.top;
   const bottomPadding = Platform.OS === "web" ? 34 : insets.bottom;
 
-  // Fetch caregiver contact info on mount
+  // Resolve THIS recipient's linked caregiver (not "any caregiver in the
+  // system"). We read from the recipient's own user doc:
+  //   • permittedCaregivers[]  → {id, name, email} of caregivers the
+  //                              recipient has invited & accepted.
+  //   • permittedCaregiverIds[] → denormalized id list used by security rules.
+  // For the "Call My Caregiver" button (single-target call) we use the first
+  // permitted caregiver. Multi-caregiver selection UI is future work.
   useEffect(() => {
+    if (!isFirebaseConfigured || !db || !user?.id) {
+      setResolvingCaregiver(false);
+      return;
+    }
+    let cancelled = false;
+    setResolvingCaregiver(true);
+    (async () => {
+      try {
+        const meSnap = await getDoc(doc(db, "users", user.id));
+        if (cancelled || !meSnap.exists()) return;
+        const me = meSnap.data() as {
+          permittedCaregivers?: Array<{ id: string; name?: string; email?: string }>;
+        };
+        const first = me.permittedCaregivers?.[0];
+        if (!first?.id) return;
+        setCaregiverId(first.id);
+        setCaregiverName(first.name ?? null);
+        // Pull phone from the caregiver's own user doc (not denormalized).
+        const cgSnap = await getDoc(doc(db, "users", first.id));
+        if (cancelled || !cgSnap.exists()) return;
+        const cg = cgSnap.data() as { name?: string; phone?: string };
+        if (cg.name) setCaregiverName(cg.name);
+        setCaregiverPhone(cg.phone && cg.phone.trim() ? cg.phone.trim() : null);
+      } catch {
+        // Silent: recipient just won't see caregiver name/phone; the call
+        // button will remain disabled (caregiverId stays null).
+      } finally {
+        if (!cancelled) setResolvingCaregiver(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
+  // RECIPIENT-INITIATED CALL — subscribe to the cameraActivations doc we just
+  // wrote so we can react to caregiver's Answer / Decline / timeout.
+  useEffect(() => {
+    if (callState.phase !== "calling") return;
     if (!isFirebaseConfigured || !db) return;
-    const q = query(collection(db, "users"), where("role", "==", "caregiver"));
-    getDocs(q)
-      .then((snap) => {
-        if (!snap.empty) {
-          const data = snap.docs[0].data();
-          setCaregiverName(data.name ?? null);
-          setCaregiverPhone(data.phone && data.phone.trim() ? data.phone.trim() : null);
+    // Guard: TypeScript can't statically prove docId is non-empty in the
+    // discriminated union, but our state machine never enters `calling`
+    // without a server-returned docId. Belt-and-suspenders check so we
+    // never call doc(db, col, "") which throws.
+    if (!callState.docId) return;
+
+    const ref = doc(db, "cameraActivations", callState.docId);
+    const { roomName, docId } = callState;
+
+    const timeoutHandle = setTimeout(() => {
+      // No answer within CALL_TIMEOUT_MS — mark the doc cancelled (best-effort)
+      // and surface "No answer" to the recipient.
+      updateDoc(ref, { status: "cancelled", cancelledAt: serverTimestamp() }).catch(() => {});
+      if (user) {
+        logAudit({
+          userId: user.id,
+          action: "recipient_call_unavailable",
+          details: `Caregiver did not answer within ${CALL_TIMEOUT_MS / 1000}s (room=${roomName})`,
+        }).catch(() => {});
+      }
+      setCallState({
+        phase: "unavailable",
+        reason: "no_answer",
+        message: "No answer. Your caregiver may be unavailable right now.",
+      });
+    }, CALL_TIMEOUT_MS);
+
+    const unsub = onSnapshot(
+      ref,
+      (snap) => {
+        const data = snap.data() as { status?: string } | undefined;
+        if (!data) return;
+        if (data.status === "answered") {
+          clearTimeout(timeoutHandle);
+          router.push({
+            pathname: "/camera-stream",
+            params: {
+              mode: "publish",
+              roomName,
+              caregiverName: caregiverName ?? "Caregiver",
+              // Forward the activation docId so the publisher's token mint
+              // can pass /api/video/token's tc-call activation-doc binding
+              // check (server requires it for tc-call-* rooms).
+              activationDocId: docId,
+            },
+          });
+          setCallState({ phase: "idle" });
+        } else if (data.status === "declined") {
+          clearTimeout(timeoutHandle);
+          if (user) {
+            logAudit({
+              userId: user.id,
+              action: "recipient_call_declined",
+              details: `Caregiver declined incoming call (room=${roomName}, docId=${docId})`,
+            }).catch(() => {});
+          }
+          setCallState({
+            phase: "unavailable",
+            reason: "declined",
+            message: "Caregiver unavailable right now.",
+          });
         }
-      })
-      .catch(() => {});
-  }, []);
+      },
+      () => {
+        // Read denied / network — silent; rely on timeout to bail out.
+      },
+    );
+
+    return () => {
+      clearTimeout(timeoutHandle);
+      unsub();
+    };
+  }, [callState, user, caregiverName]);
+
+  const handleCallCaregiver = async () => {
+    if (!user || !caregiverId) {
+      Alert.alert(
+        "No Caregiver Linked",
+        "You don't have a caregiver linked to your account yet. Ask them to invite you, or add their email in Settings."
+      );
+      return;
+    }
+
+    const roomName = buildCallRoomName(user.id);
+
+    if (Platform.OS !== "web") {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    }
+
+    // No optimistic state transition: we must wait for the server-returned
+    // signalDocId before entering `calling`, otherwise the subscribe effect
+    // would call doc(db, col, "") and throw "invalid reference". The brief
+    // delay (one HTTP round trip) is acceptable — the button still shows
+    // immediate haptic feedback above.
+    const result = await initiateReceiverCall({
+      caregiverId,
+      roomName,
+      recipientName: user.name ?? "Care recipient",
+      caregiverName: caregiverName ?? "Caregiver",
+    });
+
+    if (!result.ok || !result.signalDocId) {
+      setCallState({
+        phase: "unavailable",
+        reason: "error",
+        message: result.error ?? "Could not reach your caregiver. Please try again.",
+      });
+      return;
+    }
+
+    setCallState({ phase: "calling", docId: result.signalDocId, roomName });
+    logAudit({
+      userId: user.id,
+      action: "recipient_initiated_call",
+      details: `Care recipient initiated call to caregiver (room=${roomName}, caregiverId=${caregiverId}, docId=${result.signalDocId})`,
+      targetUserId: caregiverId,
+    }).catch(() => {});
+  };
+
+  const handleCancelCall = async () => {
+    if (callState.phase !== "calling") return;
+    const { docId, roomName } = callState;
+    setCallState({ phase: "idle" });
+    if (db && docId) {
+      try {
+        await updateDoc(doc(db, "cameraActivations", docId), {
+          status: "cancelled",
+          cancelledAt: serverTimestamp(),
+        });
+      } catch {
+        // Best-effort.
+      }
+    }
+    if (user) {
+      logAudit({
+        userId: user.id,
+        action: "recipient_call_cancelled",
+        details: `Care recipient cancelled outgoing call (room=${roomName})`,
+      }).catch(() => {});
+    }
+  };
 
   // TWILIO VIDEO — Phase 2 camera integration
   // Check if the care-recipient has answered the camera-consent prompt yet.
@@ -312,6 +520,57 @@ export default function CareReceiverHome() {
         onDismiss={() => setShowEmergency(false)}
       />
 
+      {/* RECIPIENT-INITIATED CALL — outgoing "Calling caregiver..." overlay */}
+      <Modal
+        visible={callState.phase === "calling"}
+        animationType="fade"
+        transparent
+        onRequestClose={handleCancelCall}
+      >
+        <View style={styles.callingBackdrop}>
+          <View style={styles.callingCard}>
+            <View style={styles.callingIcon}>
+              <Feather name="video" size={40} color={CALL_BLUE} />
+            </View>
+            <Text style={styles.callingTitle}>Calling caregiver…</Text>
+            <Text style={styles.callingSubtitle}>
+              {caregiverName ? `Ringing ${caregiverName}` : "Waiting for an answer"}
+            </Text>
+            <ActivityIndicator size="small" color={CALL_BLUE} style={{ marginTop: 6 }} />
+            <Pressable style={styles.callingCancel} onPress={handleCancelCall}>
+              <Feather name="phone-off" size={16} color="#fff" />
+              <Text style={styles.callingCancelText}>Cancel</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      {/* RECIPIENT-INITIATED CALL — outcome (declined / no answer / error) */}
+      <Modal
+        visible={callState.phase === "unavailable"}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setCallState({ phase: "idle" })}
+      >
+        <View style={styles.callingBackdrop}>
+          <View style={styles.callingCard}>
+            <View style={[styles.callingIcon, { backgroundColor: "rgba(255, 59, 48, 0.12)" }]}>
+              <Feather name="phone-off" size={36} color="#FF3B30" />
+            </View>
+            <Text style={styles.callingTitle}>Caregiver unavailable</Text>
+            <Text style={styles.callingSubtitle}>
+              {callState.phase === "unavailable" ? callState.message : ""}
+            </Text>
+            <Pressable
+              style={[styles.callingCancel, { backgroundColor: CALL_BLUE }]}
+              onPress={() => setCallState({ phase: "idle" })}
+            >
+              <Text style={styles.callingCancelText}>OK</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
       {!showEmergency && (
         <NotificationPermissionPrompt
           onGranted={() => {
@@ -377,6 +636,33 @@ export default function CareReceiverHome() {
             {emergencySending ? "Sending Alert..." : "I'M NOT OK"}
           </Text>
         </Pressable>
+
+        {/* Recipient-initiated video call — distinct blue color signals this
+            is a routine "call my caregiver" action, not an emergency. */}
+        {(() => {
+          // Disabled when: still resolving caregiver from Firestore, no
+          // caregiver is linked, or a call is already in flight. We dim the
+          // border/text in those cases so the affordance matches behavior.
+          const callDisabled =
+            resolvingCaregiver || !caregiverId || callState.phase === "calling";
+          const tint = callDisabled ? colors.mutedForeground : CALL_BLUE;
+          return (
+            <Pressable
+              style={[styles.callCaregiverButton, { borderColor: tint + "55" }]}
+              onPress={handleCallCaregiver}
+              disabled={callDisabled}
+            >
+              <Feather name="video" size={16} color={tint} />
+              <Text style={[styles.callCaregiverText, { color: tint }]}>
+                {resolvingCaregiver
+                  ? "Loading caregiver..."
+                  : !caregiverId
+                    ? "No Caregiver Linked"
+                    : "Call My Caregiver"}
+              </Text>
+            </Pressable>
+          );
+        })()}
 
         {lastCheckIn && (
           <View style={styles.lastCheckInRow}>
@@ -489,6 +775,78 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     paddingVertical: 16,
     paddingHorizontal: 36,
+  },
+  callCaregiverButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    borderWidth: 1,
+    borderRadius: 16,
+    paddingVertical: 16,
+    paddingHorizontal: 36,
+  },
+  callCaregiverText: {
+    fontSize: 17,
+    fontWeight: "700",
+    fontFamily: "Inter_700Bold",
+  },
+  callingBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(6, 10, 24, 0.85)",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 32,
+  },
+  callingCard: {
+    width: "100%",
+    maxWidth: 340,
+    backgroundColor: "#121a30",
+    borderRadius: 22,
+    paddingVertical: 32,
+    paddingHorizontal: 24,
+    alignItems: "center",
+    gap: 12,
+  },
+  callingIcon: {
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+    backgroundColor: "rgba(83, 145, 206, 0.14)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 4,
+  },
+  callingTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#fff",
+    fontFamily: "Inter_700Bold",
+    textAlign: "center",
+  },
+  callingSubtitle: {
+    fontSize: 14,
+    color: "rgba(255,255,255,0.6)",
+    fontFamily: "Inter_400Regular",
+    textAlign: "center",
+  },
+  callingCancel: {
+    marginTop: 18,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "#FF3B30",
+    borderRadius: 14,
+    paddingVertical: 13,
+    paddingHorizontal: 32,
+    minWidth: 140,
+  },
+  callingCancelText: {
+    color: "#fff",
+    fontWeight: "700",
+    fontSize: 15,
+    fontFamily: "Inter_700Bold",
   },
   notOkText: {
     fontSize: 17,

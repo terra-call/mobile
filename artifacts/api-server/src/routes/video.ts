@@ -24,6 +24,7 @@ import twilio from "twilio";
 import { logger } from "../lib/logger";
 import {
   createFirestoreDocAsCaller,
+  fetchFirestoreDocAsCaller,
   fetchUserDocAsCaller,
   isPermittedForReceiver,
   verifyFirebaseIdToken,
@@ -68,9 +69,10 @@ router.post(
   "/video/token",
   verifyFirebaseIdToken,
   async (req: Request, res: Response) => {
-    const { roomName, targetUserId } = req.body as {
+    const { roomName, targetUserId, activationDocId } = req.body as {
       roomName?: string;
       targetUserId?: string;
+      activationDocId?: string;
     };
     const auth = req.firebaseAuth!;
 
@@ -84,10 +86,15 @@ router.post(
     // the whole point of this middleware is to bind tokens to verified uids.
     const identity = auth.uid;
 
-    // Defense-in-depth: room name must match the deterministic format used
-    // by the mobile client's buildVideoRoomName(receiverId).
-    const expectedPrefix = `tc-emrg-${targetUserId.substring(0, 12)}-`;
-    if (!roomName.startsWith(expectedPrefix)) {
+    // Defense-in-depth: room name must match one of the deterministic formats
+    // used by the mobile client:
+    //   • tc-emrg-<targetPrefix12>-<stamp>  — emergency caregiver-initiated
+    //   • tc-call-<targetPrefix12>-<stamp>  — recipient-initiated "Call My Caregiver"
+    // In both flows the room is keyed on the care-recipient uid, so the
+    // targetUserId prefix check works identically.
+    const prefixEmrg = `tc-emrg-${targetUserId.substring(0, 12)}-`;
+    const prefixCall = `tc-call-${targetUserId.substring(0, 12)}-`;
+    if (!roomName.startsWith(prefixEmrg) && !roomName.startsWith(prefixCall)) {
       logger.warn(
         {
           action: "unauthorized_token_request",
@@ -101,20 +108,96 @@ router.post(
       return res.status(403).json({ error: "forbidden" });
     }
 
-    // Permission: caller is the receiver themselves OR a permitted caregiver.
-    const permitted = await isPermittedForReceiver(auth, targetUserId);
-    if (!permitted) {
-      logger.warn(
-        {
-          action: "unauthorized_token_request",
-          userId: auth.uid,
-          targetUserId,
-          roomName,
-          reason: "not_permitted_caregiver",
-        },
-        "Token request rejected — caller is not the receiver nor a permitted caregiver",
+    // Permission split by flow:
+    //   • tc-emrg-* (caregiver→recipient emergency) — caller must be the
+    //     receiver themselves OR any permitted caregiver. Multiple caregivers
+    //     joining is desired in an emergency (e.g. spouse + adult child).
+    //   • tc-call-* (recipient→caregiver "Call My Caregiver") — caller must
+    //     be EXACTLY the recipient or the signaled caregiverId from the
+    //     cameraActivations doc. Permitted-but-not-signaled caregivers MUST
+    //     NOT be able to join uninvited — this is a private 1:1 call.
+    if (roomName.startsWith(prefixCall)) {
+      if (!activationDocId) {
+        logger.warn(
+          {
+            action: "unauthorized_token_request",
+            userId: auth.uid,
+            targetUserId,
+            roomName,
+            reason: "missing_activation_doc_for_call",
+          },
+          "tc-call token request rejected — activationDocId required",
+        );
+        return res.status(400).json({ error: "activationDocId required" });
+      }
+      const doc = await fetchFirestoreDocAsCaller(
+        auth.idToken,
+        "cameraActivations",
+        activationDocId,
       );
-      return res.status(403).json({ error: "forbidden" });
+      const fields =
+        (doc as {
+          fields?: {
+            recipientId?: { stringValue?: string };
+            caregiverId?: { stringValue?: string };
+            initiatedBy?: { stringValue?: string };
+            roomName?: { stringValue?: string };
+          };
+        } | null)?.fields;
+      const signaledRecipientId = fields?.recipientId?.stringValue;
+      const signaledCaregiverId = fields?.caregiverId?.stringValue;
+      const initiatedBy = fields?.initiatedBy?.stringValue;
+      const signaledRoom = fields?.roomName?.stringValue;
+      if (
+        !fields ||
+        initiatedBy !== "recipient" ||
+        signaledRoom !== roomName ||
+        signaledRecipientId !== targetUserId
+      ) {
+        logger.warn(
+          {
+            action: "unauthorized_token_request",
+            userId: auth.uid,
+            targetUserId,
+            roomName,
+            activationDocId,
+            reason: "activation_doc_mismatch",
+          },
+          "tc-call token request rejected — activation doc not found or mismatched",
+        );
+        return res.status(403).json({ error: "forbidden" });
+      }
+      // Identity must be one of the two signaled participants. No "permitted
+      // caregiver B" smuggling in via the broader permittedCaregivers list.
+      if (auth.uid !== signaledRecipientId && auth.uid !== signaledCaregiverId) {
+        logger.warn(
+          {
+            action: "unauthorized_token_request",
+            userId: auth.uid,
+            targetUserId,
+            roomName,
+            activationDocId,
+            reason: "caller_not_signaled_participant",
+          },
+          "tc-call token request rejected — caller is neither the signaled recipient nor caregiver",
+        );
+        return res.status(403).json({ error: "forbidden" });
+      }
+    } else {
+      const permitted = await isPermittedForReceiver(auth, targetUserId);
+      if (!permitted) {
+        logger.warn(
+          {
+            action: "unauthorized_token_request",
+            userId: auth.uid,
+            targetUserId,
+            roomName,
+            reason: "not_permitted_caregiver",
+          },
+          "Token request rejected — caller is not the receiver nor a permitted caregiver",
+        );
+        return res.status(403).json({ error: "forbidden" });
+      }
     }
 
     if (!isVideoConfigured()) {
@@ -327,6 +410,152 @@ router.post(
     logger.error({ err }, "/api/video/initiate failed");
     return res.status(500).json({ error: "internal_error" });
   }
+  },
+);
+
+/**
+ * POST /api/video/receiver-initiate
+ *
+ * Recipient-initiated "Call My Caregiver" flow. The care recipient taps the
+ * blue button on their home screen; this endpoint writes a cameraActivations
+ * doc with `initiatedBy: "recipient"` that the caregiver's app listens for
+ * to surface an incoming-call modal. NOT an emergency — no SMS, no push,
+ * no missed-checkin escalation.
+ *
+ * Headers: `Authorization: Bearer <Firebase ID token>` (REQUIRED)
+ * Body:    { caregiverId: string, roomName: string,
+ *            recipientName?: string, caregiverName?: string }
+ *
+ * AUTH GATE (mirrors /video/initiate pattern):
+ *   1. verifyFirebaseIdToken — cryptographic ID-token check
+ *   2. The caller IS the recipient (recipientId == auth.uid is implicit;
+ *      we write it server-side from the verified uid)
+ *   3. caregiverId must be listed on the recipient's `permittedCaregiverIds`
+ *      array (prevents calling arbitrary uids)
+ *   4. roomName must match `tc-call-<callerPrefix12>-<stamp>` to bind the
+ *      room to the recipient (same defense-in-depth as /video/token)
+ */
+router.post(
+  "/video/receiver-initiate",
+  verifyFirebaseIdToken,
+  async (req: Request, res: Response) => {
+    try {
+      const { caregiverId, roomName, recipientName, caregiverName } =
+        req.body as {
+          caregiverId?: string;
+          roomName?: string;
+          recipientName?: string;
+          caregiverName?: string;
+        };
+      const auth = req.firebaseAuth!;
+
+      if (!caregiverId || !roomName) {
+        return res
+          .status(400)
+          .json({ error: "caregiverId and roomName are required" });
+      }
+
+      // Room name must be derived from the caller's own uid (the recipient).
+      const expectedPrefix = `tc-call-${auth.uid.substring(0, 12)}-`;
+      if (!roomName.startsWith(expectedPrefix)) {
+        logger.warn(
+          {
+            action: "unauthorized_token_request",
+            userId: auth.uid,
+            caregiverId,
+            roomName,
+            reason: "room_caller_mismatch",
+            route: "/video/receiver-initiate",
+          },
+          "Receiver-initiate rejected — roomName does not match caller uid",
+        );
+        return res.status(403).json({ error: "forbidden" });
+      }
+
+      // PERMISSION — caregiverId must be a permitted caregiver on the
+      // recipient's own user doc. Reads use the caller's ID token so existing
+      // Firestore Security Rules govern visibility (no admin bypass).
+      const recipientDoc = await fetchUserDocAsCaller(auth.idToken, auth.uid);
+      const permittedRaw =
+        (recipientDoc as {
+          fields?: {
+            permittedCaregiverIds?: {
+              arrayValue?: { values?: Array<{ stringValue?: string }> };
+            };
+          };
+        } | null)?.fields?.permittedCaregiverIds?.arrayValue?.values ?? [];
+      const permittedIds = permittedRaw
+        .map((v) => v.stringValue)
+        .filter((s): s is string => typeof s === "string");
+
+      if (!permittedIds.includes(caregiverId)) {
+        logger.warn(
+          {
+            action: "unauthorized_token_request",
+            userId: auth.uid,
+            caregiverId,
+            roomName,
+            reason: "caregiver_not_permitted",
+            route: "/video/receiver-initiate",
+          },
+          "Receiver-initiate rejected — caregiverId not in recipient's permittedCaregiverIds",
+        );
+        return res.status(403).json({ error: "forbidden" });
+      }
+
+      // Write the cameraActivations signal doc using the caller's token so
+      // Firestore Security Rules also enforce the recipient → caregiver
+      // direction (defense-in-depth against server bugs).
+      const signalDocName = await createFirestoreDocAsCaller(
+        auth.idToken,
+        "cameraActivations",
+        {
+          callerUid: auth.uid,
+          recipientId: auth.uid,
+          caregiverId,
+          initiatedBy: "recipient",
+          callerName: recipientName ?? "Care recipient",
+          recipientName: recipientName ?? "Care recipient",
+          caregiverName: caregiverName ?? "Caregiver",
+          roomName,
+          status: "pending",
+          createdAt: new Date(),
+        },
+      );
+
+      if (!signalDocName) {
+        logger.error(
+          { callerUid: auth.uid, caregiverId, roomName },
+          "Receiver-initiate failed — could not write cameraActivations doc",
+        );
+        return res.status(502).json({
+          error: "signal_write_failed",
+          message: "Could not reach your caregiver. Please try again.",
+        });
+      }
+
+      // signalDocName is "projects/<pid>/databases/(default)/documents/cameraActivations/<id>".
+      // Strip everything before the final "/" to get just the docId so the
+      // client can subscribe to status updates without a second roundtrip.
+      const signalDocId =
+        signalDocName.split("/").pop() ?? signalDocName;
+
+      logger.info(
+        { roomName, recipientId: auth.uid, caregiverId, signalDoc: signalDocName },
+        "Recipient-initiated call signaled (auth verified)",
+      );
+
+      return res.json({
+        ok: true,
+        roomName,
+        signalDocId,
+        signalWritten: true,
+        videoConfigured: isVideoConfigured(),
+      });
+    } catch (err) {
+      logger.error({ err }, "/api/video/receiver-initiate failed");
+      return res.status(500).json({ error: "internal_error" });
+    }
   },
 );
 

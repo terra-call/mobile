@@ -57,6 +57,60 @@ export function buildVideoRoomName(receiverId: string): string {
 }
 
 /**
+ * Build a deterministic Twilio Video room name for a RECIPIENT-INITIATED call.
+ * Keyed on the recipient uid so /api/video/token can enforce the same
+ * room-name/uid binding as the emergency flow. Distinct prefix lets the
+ * server tell the two flows apart in logs.
+ */
+export function buildCallRoomName(recipientId: string): string {
+  const stamp = Math.floor(Date.now() / 1000);
+  return `tc-call-${recipientId.substring(0, 12)}-${stamp}`;
+}
+
+/**
+ * Recipient-initiated "Call My Caregiver" — tell the server to write the
+ * cameraActivations doc that the caregiver's app is listening for.
+ * NOT an emergency: no SMS, no missed-checkin push, no escalation.
+ */
+export async function initiateReceiverCall(input: {
+  caregiverId: string;
+  roomName: string;
+  recipientName?: string;
+  caregiverName?: string;
+}): Promise<{ ok: boolean; signalDocId?: string; error?: string }> {
+  if (!API_BASE) return { ok: false, error: "API server URL not configured" };
+
+  let idToken: string;
+  try {
+    const currentUser = auth?.currentUser;
+    if (!currentUser) return { ok: false, error: "Not signed in" };
+    idToken = await currentUser.getIdToken();
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : "id-token refresh failed";
+    return { ok: false, error: reason };
+  }
+
+  try {
+    const res = await fetch(`${API_BASE}/api/video/receiver-initiate`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${idToken}`,
+      },
+      body: JSON.stringify(input),
+    });
+    if (res.status === 401) return { ok: false, error: "Not authorized" };
+    if (res.status === 403) return { ok: false, error: "Caregiver is not linked to your account" };
+    if (!res.ok) return { ok: false, error: `Server returned ${res.status}` };
+    const data = (await res.json()) as { ok?: boolean; signalDocId?: string };
+    return { ok: !!data.ok, signalDocId: data.signalDocId };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to start call";
+    return { ok: false, error: message };
+  }
+}
+
+/**
  * Tell the server to push a "camera_activate" notification to the
  * care-recipient's device. The receiver's app picks this up via the
  * notification listener and navigates to the camera-publish screen.
@@ -166,8 +220,14 @@ export async function requestVideoToken(input: {
   roomName: string;
   targetUserId: string;
   auditUserId?: string;
+  // RECIPIENT-INITIATED CALL ONLY — the cameraActivations docId written by
+  // /api/video/receiver-initiate. Required for tc-call-* rooms so the server
+  // can bind token minting to the specific caregiverId that was signaled
+  // (not just "any permitted caregiver", which would let a permitted
+  // caregiver B join recipient→caregiverA's private call uninvited).
+  activationDocId?: string;
 }): Promise<VideoTokenResult> {
-  const { identity, roomName, targetUserId, auditUserId } = input;
+  const { identity, roomName, targetUserId, auditUserId, activationDocId } = input;
 
   const audit = (details: string) => {
     if (!auditUserId) return;
@@ -210,7 +270,7 @@ export async function requestVideoToken(input: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${idToken}`,
       },
-      body: JSON.stringify({ roomName, targetUserId }),
+      body: JSON.stringify({ roomName, targetUserId, activationDocId }),
     });
   } catch (err) {
     const reason = err instanceof Error ? err.message : "network failure";

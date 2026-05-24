@@ -95,29 +95,86 @@ service cloud.firestore {
       // on arbitrary receivers.
       allow create: if isSignedIn()
                     && request.resource.data.callerUid == request.auth.uid
-                    && request.resource.data.receiverUid is string
                     && request.resource.data.roomName is string
                     && request.resource.data.status == 'pending'
                     && request.resource.data.createdAt is timestamp
                     && (
-                         request.resource.data.receiverUid == request.auth.uid
+                         // EMERGENCY direction: caregiver → recipient (or recipient → self).
+                         // Branch is mutually exclusive with the recipient flow:
+                         // emergency docs MUST NOT carry the initiatedBy/caregiverId
+                         // discriminators — otherwise a caregiver with emergency
+                         // permission on recipient A could craft a forged
+                         // "recipient-initiated" doc that points at an arbitrary
+                         // caregiver B's IncomingCallListener.
+                         (request.resource.data.receiverUid is string
+                          && !('initiatedBy' in request.resource.data)
+                          && !('caregiverId' in request.resource.data)
+                          && !('recipientId' in request.resource.data)
+                          && (
+                               request.resource.data.receiverUid == request.auth.uid
+                               ||
+                               request.auth.uid in
+                                 get(/databases/$(database)/documents/users/$(request.resource.data.receiverUid))
+                                   .data.permittedCaregiverIds
+                             ))
                          ||
-                         request.auth.uid in
-                           get(/databases/$(database)/documents/users/$(request.resource.data.receiverUid))
-                             .data.permittedCaregiverIds
+                         // RECIPIENT-INITIATED direction: recipient → caregiver
+                         // ("Call My Caregiver" blue button). Caller must be the
+                         // recipient themselves and the named caregiverId must be
+                         // listed on their own permittedCaregiverIds array.
+                         // MUST NOT carry receiverUid so the emergency receiver
+                         // listener cannot be triggered by this branch.
+                         (request.resource.data.initiatedBy == 'recipient'
+                          && !('receiverUid' in request.resource.data)
+                          && request.resource.data.recipientId == request.auth.uid
+                          && request.resource.data.caregiverId is string
+                          && request.resource.data.caregiverId in
+                             get(/databases/$(database)/documents/users/$(request.auth.uid))
+                               .data.permittedCaregiverIds)
                        );
-      allow read:   if isSignedIn()
-                    && resource.data.receiverUid == request.auth.uid;
-      // UPDATE — receiver only, and only the status transition pending->processed
-      // (plus processedAt timestamp). Prevents arbitrary status mutation or
-      // schema tampering that could be used to replay/forge activations.
+      // READ — three audiences:
+      //   1. The recipient receiving an emergency push (receiverUid match)
+      //   2. The caregiver being called by a recipient (caregiverId match on
+      //      recipient-initiated docs)
+      //   3. The recipient who initiated their own call, so they can subscribe
+      //      to status transitions (answered / declined)
+      allow read:   if isSignedIn() && (
+                         (resource.data.receiverUid is string
+                          && resource.data.receiverUid == request.auth.uid)
+                         ||
+                         (resource.data.initiatedBy == 'recipient'
+                          && (resource.data.caregiverId == request.auth.uid
+                              || resource.data.recipientId == request.auth.uid))
+                       );
+      // UPDATE — three permitted state transitions, all from status=='pending':
+      //   • EMERGENCY: receiver marks own doc 'processed' (existing behavior)
+      //   • RECIPIENT-INITIATED: caregiver responds 'answered' or 'declined'
+      //   • RECIPIENT-INITIATED: recipient cancels their own outgoing call
       allow update: if isSignedIn()
-                    && resource.data.receiverUid == request.auth.uid
                     && resource.data.status == 'pending'
-                    && request.resource.data.status == 'processed'
-                    && request.resource.data.diff(resource.data)
-                         .affectedKeys()
-                         .hasOnly(['status', 'processedAt']);
+                    && (
+                         (resource.data.receiverUid is string
+                          && resource.data.receiverUid == request.auth.uid
+                          && request.resource.data.status == 'processed'
+                          && request.resource.data.diff(resource.data)
+                               .affectedKeys()
+                               .hasOnly(['status', 'processedAt']))
+                         ||
+                         (resource.data.initiatedBy == 'recipient'
+                          && resource.data.caregiverId == request.auth.uid
+                          && (request.resource.data.status == 'answered'
+                              || request.resource.data.status == 'declined')
+                          && request.resource.data.diff(resource.data)
+                               .affectedKeys()
+                               .hasOnly(['status', 'respondedAt']))
+                         ||
+                         (resource.data.initiatedBy == 'recipient'
+                          && resource.data.recipientId == request.auth.uid
+                          && request.resource.data.status == 'cancelled'
+                          && request.resource.data.diff(resource.data)
+                               .affectedKeys()
+                               .hasOnly(['status', 'cancelledAt']))
+                       );
       allow delete: if false;
     }
 
