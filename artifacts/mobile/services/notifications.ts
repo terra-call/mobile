@@ -260,5 +260,5 @@ export async function triggerSmsAlert(
   status: "missed" | "emergency" | "manual_emergency",
   minutesSinceDue: number
 ): Promise<void> {
-  await callNotifyApi("/notify/sms", { phones, receiverName, status, minutesSinceDue });
+  await callNotifyApi("/api/notify/sms", { phones, receiverName, status, minutesSinceDue });
 }

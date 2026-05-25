@@ -361,7 +361,7 @@ export default function SettingsScreen() {
       if (notifEnabled && caregivers.length > 0) {
         try {
           const cgPhones = await getCaregiverPhones(caregivers);
-          await callNotifyApi("/notify/schedule", {
+          await callNotifyApi("/api/notify/schedule", {
             userId: user.id,
             receiverName: user.name ?? "Care Recipient",
             scheduleType: scheduleType,

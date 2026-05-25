@@ -158,7 +158,7 @@ export default function OverviewTab() {
 
       if (API_BASE) {
         try {
-          const healthRes = await fetch(`${API_BASE}/healthz`);
+          const healthRes = await fetch(`${API_BASE}/api/healthz`);
           apiStatus = healthRes.ok ? "up" : "down";
         } catch {
           apiStatus = "down";
@@ -166,7 +166,7 @@ export default function OverviewTab() {
         }
 
         try {
-          const twilioRes = await fetch(`${API_BASE}/admin/health`);
+          const twilioRes = await fetch(`${API_BASE}/api/admin/health`);
           if (twilioRes.ok) {
             const j = (await twilioRes.json()) as {
               twilio?: { sent?: number; delivered?: number; rate?: number | null };

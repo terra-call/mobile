@@ -316,7 +316,7 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
     notifiedRef.current = { missed: false, emergency: false };
 
     // Notify API server scheduler so it resets its counters too
-    callNotifyApi("/notify/checkin", { userId: user.id, checkedInAt: now }).catch(() => {});
+    callNotifyApi("/api/notify/checkin", { userId: user.id, checkedInAt: now }).catch(() => {});
 
     // Log event for the admin dashboard
     logEvent(user.id, user.name ?? "Care Recipient", "checkin").catch(() => {});
@@ -368,7 +368,7 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
 
     // Single atomic call to the server — handles push, SMS, and missed-alert suppression.
     // Server respects smsConsent and skips SMS when false.
-    const ok = await callNotifyApi("/notify/emergency", {
+    const ok = await callNotifyApi("/api/notify/emergency", {
       userId: user.id,
       receiverName,
       caregiverTokens: cgTokens,

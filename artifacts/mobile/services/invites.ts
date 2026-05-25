@@ -158,7 +158,7 @@ export async function sendInviteSms(
 ): Promise<SmsResult> {
   if (!API_BASE) return { ok: false, reason: "network" };
   try {
-    const res = await fetch(`${API_BASE}/invites/sms`, {
+    const res = await fetch(`${API_BASE}/api/invites/sms`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ phone, code, caregiverName }),
