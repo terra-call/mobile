@@ -579,8 +579,65 @@ router.post(
       const signalDocId =
         signalDocName.split("/").pop() ?? signalDocName;
 
+      // PUSH WAKEUP — best effort. The Firestore signal above is the primary
+      // delivery mechanism, but it only fires while the caregiver app is
+      // foregrounded (Firestore onSnapshot pauses in background). Sending a
+      // push wakes the caregiver's device so the listener subscribes in time
+      // for the recipient's 45s call timeout. Mirrors the caregiver→recipient
+      // direction in /video/initiate.
+      //
+      // PHI hygiene (per replit.md): title/body are generic with NO names.
+      // The recipient name is forwarded in the `data` payload only, which is
+      // delivered to the app silently and not shown on a locked screen.
+      let pushSent = false;
+      try {
+        const caregiverDoc = await fetchUserDocAsCaller(auth.idToken, caregiverId);
+        const caregiverPushToken =
+          (caregiverDoc as {
+            fields?: { expoPushToken?: { stringValue?: string } };
+          } | null)?.fields?.expoPushToken?.stringValue ?? "";
+
+        if (caregiverPushToken && caregiverPushToken.startsWith("ExponentPushToken")) {
+          const title = "Incoming Call";
+          const body = "Tap to answer";
+          const pushResult = await sendPush([caregiverPushToken], title, body, {
+            type: "recipient_call",
+            roomName,
+            recipientName: recipientName ?? "Care recipient",
+            recipientId: auth.uid,
+            signalDocId,
+            // Defensive: the caregiver listener can ignore the push if the
+            // device is logged into a different account than the intended
+            // caregiver (e.g. stale token routed to wrong device).
+            caregiverUid: caregiverId,
+          });
+          pushSent = pushResult.delivered;
+          if (!pushResult.delivered) {
+            logger.warn(
+              { roomName, caregiverId, callerUid: auth.uid, validTokens: pushResult.validTokens },
+              "Recipient-initiated call push wakeup failed (Firestore signal still delivered)",
+            );
+          }
+        } else {
+          logger.info(
+            { callerUid: auth.uid, caregiverId, roomName, hasToken: !!caregiverPushToken },
+            "Skipping caregiver push wakeup — no valid Expo push token on file (Firestore signal still delivered)",
+          );
+        }
+      } catch (pushErr) {
+        // Best-effort: never fail the request because push send blew up.
+        logger.warn(
+          {
+            err: pushErr instanceof Error ? pushErr.message : String(pushErr),
+            roomName,
+            caregiverId,
+          },
+          "Recipient-initiated call push wakeup threw (Firestore signal still delivered)",
+        );
+      }
+
       logger.info(
-        { roomName, recipientId: auth.uid, caregiverId, signalDoc: signalDocName },
+        { roomName, recipientId: auth.uid, caregiverId, pushSent, signalDoc: signalDocName },
         "Recipient-initiated call signaled (auth verified)",
       );
 
@@ -589,6 +646,7 @@ router.post(
         roomName,
         signalDocId,
         signalWritten: true,
+        pushSent,
         videoConfigured: isVideoConfigured(),
       });
     } catch (err) {
