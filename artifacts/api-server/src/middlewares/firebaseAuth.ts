@@ -202,17 +202,34 @@ export async function fetchFirestoreDocAsCaller(
   }
 }
 
+/**
+ * Result of a Firestore REST create attempt.
+ *
+ * Discriminated so callers can distinguish:
+ *   • ok=true                     → write succeeded, `name` is the full doc path
+ *   • ok=false, permissionDenied  → Firestore Security Rules rejected the write
+ *                                   (rules-vs-code drift; client should see 403)
+ *   • ok=false, !permissionDenied → transport/config failure (client should see 502)
+ *
+ * This separation matters because an opaque "null" return collapses both
+ * cases into a single 502 on the wire, making rules-deployment drift look
+ * like a server outage to the mobile app.
+ */
+export type FirestoreCreateResult =
+  | { ok: true; name: string }
+  | { ok: false; permissionDenied: boolean; status: number };
+
 export async function createFirestoreDocAsCaller(
   callerIdToken: string,
   collectionPath: string,
   fields: Record<string, unknown>,
-): Promise<string | null> {
+): Promise<FirestoreCreateResult> {
   if (!FIREBASE_PROJECT_ID) {
     logger.error(
       { collectionPath },
       "createFirestoreDocAsCaller — FIREBASE_PROJECT_ID env var not set on server",
     );
-    return null;
+    return { ok: false, permissionDenied: false, status: 0 };
   }
   try {
     const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/${collectionPath}`;
@@ -229,14 +246,28 @@ export async function createFirestoreDocAsCaller(
       // permission-denied vs schema-invalid vs project-misconfigured. Body
       // is small (Firestore returns a JSON error envelope) — safe to log.
       const errBody = await r.text().catch(() => "<unreadable>");
+      const permissionDenied =
+        r.status === 403 || /PERMISSION_DENIED/.test(errBody);
       logger.error(
-        { collectionPath, status: r.status, body: errBody.slice(0, 800) },
+        {
+          collectionPath,
+          status: r.status,
+          permissionDenied,
+          body: errBody.slice(0, 800),
+        },
         "createFirestoreDocAsCaller — Firestore REST rejected the create",
       );
-      return null;
+      return { ok: false, permissionDenied, status: r.status };
     }
     const json = (await r.json()) as { name?: string };
-    return json.name ?? null;
+    if (!json.name) {
+      logger.error(
+        { collectionPath },
+        "createFirestoreDocAsCaller — Firestore response missing doc name",
+      );
+      return { ok: false, permissionDenied: false, status: 200 };
+    }
+    return { ok: true, name: json.name };
   } catch (err) {
     logger.error(
       {
@@ -245,7 +276,7 @@ export async function createFirestoreDocAsCaller(
       },
       "createFirestoreDocAsCaller — network/parse error",
     );
-    return null;
+    return { ok: false, permissionDenied: false, status: 0 };
   }
 }
 

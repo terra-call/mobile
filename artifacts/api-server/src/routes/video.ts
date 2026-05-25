@@ -338,7 +338,7 @@ router.post(
     // it works on every platform regardless of push token state (FCM-blocked
     // Android, app force-killed, silent mode, low power, missing iOS APNs
     // entitlement, etc). The push is now best-effort wakeup only.
-    const signalDocName = await createFirestoreDocAsCaller(
+    const signalResult = await createFirestoreDocAsCaller(
       auth.idToken,
       "cameraActivations",
       {
@@ -352,16 +352,35 @@ router.post(
       },
     );
 
-    if (!signalDocName) {
+    if (!signalResult.ok) {
       logger.error(
-        { callerUid: auth.uid, targetUserId, roomName },
+        {
+          callerUid: auth.uid,
+          targetUserId,
+          roomName,
+          permissionDenied: signalResult.permissionDenied,
+          firestoreStatus: signalResult.status,
+        },
         "Initiate failed — could not write cameraActivations signal doc",
       );
+      if (signalResult.permissionDenied) {
+        // Rules-vs-code drift: the server's permission check passed, but the
+        // Firestore Security Rules denied the create. Almost always means the
+        // rules file in this repo hasn't been deployed to Firebase. Return
+        // 403 (not 502) so the mobile app + ops surface this as an auth
+        // problem rather than a server outage.
+        return res.status(403).json({
+          error: "firestore_rules_denied",
+          message:
+            "This call could not be signaled. Please contact support if the problem persists.",
+        });
+      }
       return res.status(502).json({
         error: "signal_write_failed",
         message: "Could not signal the receiver's device. Please try again.",
       });
     }
+    const signalDocName = signalResult.name;
 
     // Best-effort push wakeup — fires only if the receiver has a valid token
     // on file. Failure here is logged but does NOT fail the request, because
@@ -506,7 +525,7 @@ router.post(
       // Write the cameraActivations signal doc using the caller's token so
       // Firestore Security Rules also enforce the recipient → caregiver
       // direction (defense-in-depth against server bugs).
-      const signalDocName = await createFirestoreDocAsCaller(
+      const signalResult = await createFirestoreDocAsCaller(
         auth.idToken,
         "cameraActivations",
         {
@@ -523,16 +542,36 @@ router.post(
         },
       );
 
-      if (!signalDocName) {
+      if (!signalResult.ok) {
         logger.error(
-          { callerUid: auth.uid, caregiverId, roomName },
+          {
+            callerUid: auth.uid,
+            caregiverId,
+            roomName,
+            permissionDenied: signalResult.permissionDenied,
+            firestoreStatus: signalResult.status,
+          },
           "Receiver-initiate failed — could not write cameraActivations doc",
         );
+        if (signalResult.permissionDenied) {
+          // Rules-vs-code drift: the server's permittedCaregiverIds check
+          // passed but Firestore Security Rules denied the create. Almost
+          // always means the rules file in this repo hasn't been deployed
+          // to Firebase (`firebase deploy --only firestore:rules`). Return
+          // 403 with a distinct error code so the mobile app surfaces this
+          // as "caregiver unavailable" rather than a generic server outage.
+          return res.status(403).json({
+            error: "firestore_rules_denied",
+            message:
+              "Your caregiver link is not fully set up. Please contact support if this keeps happening.",
+          });
+        }
         return res.status(502).json({
           error: "signal_write_failed",
           message: "Could not reach your caregiver. Please try again.",
         });
       }
+      const signalDocName = signalResult.name;
 
       // signalDocName is "projects/<pid>/databases/(default)/documents/cameraActivations/<id>".
       // Strip everything before the final "/" to get just the docId so the

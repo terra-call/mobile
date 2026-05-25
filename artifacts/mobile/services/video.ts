@@ -23,7 +23,14 @@ import { doc, getDoc } from "firebase/firestore";
 import { auth, db, isFirebaseConfigured } from "./firebase";
 import { logAudit } from "./audit";
 
-const API_BASE = (process.env.EXPO_PUBLIC_API_URL ?? "").replace(/\/$/, "");
+// Normalize: strip a trailing slash AND a trailing `/api` so the value is
+// always the bare origin. Historically the workspace `.replit` env had this
+// URL ending in `/api`, which silently double-prefixed every fetch to
+// `/api/api/...` and produced 404s. Tolerate both shapes so an env-var typo
+// can never resurrect that bug.
+const API_BASE = (process.env.EXPO_PUBLIC_API_URL ?? "")
+  .replace(/\/$/, "")
+  .replace(/\/api$/, "");
 
 /**
  * Plain-English error shown to the caregiver when video token minting fails.
@@ -100,8 +107,35 @@ export async function initiateReceiverCall(input: {
       body: JSON.stringify(input),
     });
     if (res.status === 401) return { ok: false, error: "Not authorized" };
-    if (res.status === 403) return { ok: false, error: "Caregiver is not linked to your account" };
-    if (!res.ok) return { ok: false, error: `Server returned ${res.status}` };
+    if (!res.ok) {
+      // Try to read the server's structured error envelope first so we can
+      // distinguish "rules-not-deployed" (firestore_rules_denied) from
+      // "caregiver-not-linked" without forcing the user to read HTTP codes.
+      let serverError: string | undefined;
+      let serverMessage: string | undefined;
+      try {
+        const body = (await res.json()) as { error?: string; message?: string };
+        serverError = body.error;
+        serverMessage = body.message;
+      } catch {
+        // Non-JSON body; fall through to generic message.
+      }
+      if (serverError === "firestore_rules_denied") {
+        return {
+          ok: false,
+          error:
+            serverMessage ??
+            "Your caregiver link is not fully set up. Please contact support if this keeps happening.",
+        };
+      }
+      if (res.status === 403) {
+        return {
+          ok: false,
+          error: serverMessage ?? "Caregiver is not linked to your account",
+        };
+      }
+      return { ok: false, error: serverMessage ?? `Server returned ${res.status}` };
+    }
     const data = (await res.json()) as { ok?: boolean; signalDocId?: string };
     return { ok: !!data.ok, signalDocId: data.signalDocId };
   } catch (err) {
@@ -154,9 +188,31 @@ export async function initiateCameraActivation(input: {
       body: JSON.stringify(input),
     });
     if (res.status === 401) return { ok: false, error: "Not authorized" };
-    if (res.status === 403) return { ok: false, error: "Not permitted to activate this camera" };
     if (!res.ok) {
-      return { ok: false, error: `Server returned ${res.status}` };
+      let serverError: string | undefined;
+      let serverMessage: string | undefined;
+      try {
+        const body = (await res.json()) as { error?: string; message?: string };
+        serverError = body.error;
+        serverMessage = body.message;
+      } catch {
+        // Non-JSON body; fall through.
+      }
+      if (serverError === "firestore_rules_denied") {
+        return {
+          ok: false,
+          error:
+            serverMessage ??
+            "Camera activation is not yet enabled on this account. Please contact support.",
+        };
+      }
+      if (res.status === 403) {
+        return {
+          ok: false,
+          error: serverMessage ?? "Not permitted to activate this camera",
+        };
+      }
+      return { ok: false, error: serverMessage ?? `Server returned ${res.status}` };
     }
     const data = (await res.json()) as { ok?: boolean; videoConfigured?: boolean };
     return { ok: !!data.ok, videoConfigured: data.videoConfigured };
