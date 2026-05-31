@@ -9,6 +9,7 @@ import {
   arrayRemove,
   collection,
   doc,
+  getDoc,
   getDocs,
   query,
   updateDoc,
@@ -20,6 +21,7 @@ import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -34,6 +36,12 @@ import { useColors } from "@/hooks/useColors";
 import { auth, db, isFirebaseConfigured } from "@/services/firebase";
 import { logAudit } from "@/services/audit";
 import { createInvite, sendInviteSms } from "@/services/invites";
+import {
+  getNotificationPermissionStatus,
+  registerForPushNotifications,
+  requestNotificationPermissions,
+  type NotifPermStatus,
+} from "@/services/notifications";
 
 interface LinkedReceiver {
   id: string;
@@ -73,6 +81,89 @@ export default function CaregiverSettingsScreen() {
   const [inviteGenerating, setInviteGenerating] = useState(false);
   const [invitePhone, setInvitePhone] = useState("");
   const [inviteSmsSending, setInviteSmsSending] = useState(false);
+
+  // Push notification diagnostics — caregivers must have a registered push
+  // token or they never receive incoming-call wakeups while the app is closed.
+  const [pushPermStatus, setPushPermStatus] = useState<NotifPermStatus>("undetermined");
+  const [pushRequesting, setPushRequesting] = useState(false);
+  const [pushTokenSuffix, setPushTokenSuffix] = useState<string | null>(null);
+  const [pushError, setPushError] = useState<string | null>(null);
+  const [pushLoading, setPushLoading] = useState(true);
+
+  // Returns the last 6 meaningful chars of an Expo push token for display.
+  // Token format is "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]"; we strip the
+  // wrapper so the suffix is actually distinguishing.
+  const tokenSuffixOf = (token: string): string => {
+    const inner = token.replace(/^ExponentPushToken\[/, "").replace(/\]$/, "");
+    return inner.slice(-6);
+  };
+
+  // ── Load current push permission + saved token on mount ────────────────────
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const status = await getNotificationPermissionStatus();
+      if (cancelled) return;
+      setPushPermStatus(status);
+
+      if (user && isFirebaseConfigured && db) {
+        try {
+          const snap = await getDoc(doc(db, "users", user.id));
+          if (!cancelled && snap.exists()) {
+            const token = snap.data().expoPushToken as string | undefined;
+            setPushTokenSuffix(token ? tokenSuffixOf(token) : null);
+          }
+        } catch {
+          // ignore — diagnostic surface only
+        }
+      }
+      if (!cancelled) setPushLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
+
+  const handleEnablePush = async () => {
+    if (pushPermStatus === "denied") {
+      Alert.alert(
+        "Notifications Blocked",
+        "Push notifications were previously denied. Open your device Settings, find Terra Call, and turn Notifications on — otherwise you won't get incoming call alerts.",
+        [
+          { text: "OK" },
+          { text: "Open Settings", onPress: () => Linking.openSettings().catch(() => {}) },
+        ]
+      );
+      return;
+    }
+    if (!user) return;
+    setPushRequesting(true);
+    setPushError(null);
+    try {
+      const granted = await requestNotificationPermissions();
+      const newStatus = await getNotificationPermissionStatus();
+      setPushPermStatus(newStatus);
+      if (!granted) {
+        setPushRequesting(false);
+        return;
+      }
+      const result = await registerForPushNotifications(user.id);
+      if (result.token) {
+        setPushTokenSuffix(tokenSuffixOf(result.token));
+        setPushError(null);
+        Alert.alert("Enabled", "This device is now registered. Incoming calls from your care recipients will ring here even when the app is closed.");
+      } else {
+        setPushTokenSuffix(null);
+        setPushError(result.error ?? "Unknown error");
+        Alert.alert(
+          "Push Registration Failed",
+          `Notifications are allowed, but registering this device with the push service failed:\n\n${result.error ?? "Unknown error"}\n\nUntil this is fixed, you won't receive incoming-call alerts when the app is closed.`
+        );
+      }
+    } finally {
+      setPushRequesting(false);
+    }
+  };
 
   const generateInviteCode = async () => {
     if (!user) return;
@@ -346,6 +437,73 @@ export default function CaregiverSettingsScreen() {
               <PasswordField value={currentPassword} onChange={setCurrentPassword} show={showCurrentPass} onToggle={() => setShowCurrentPass(v => !v)} placeholder="Confirm your current password" colors={colors} />
             </View>
             <ActionButton label="Update Credentials" loading={credSaving} onPress={saveCredentials} bg="#00C8FF" fg="#060a18" />
+          </View>
+        </View>
+
+        {/* ── Notifications (push diagnostics) ── */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>NOTIFICATIONS</Text>
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <Text style={[styles.sectionNote, { color: colors.mutedForeground }]}>
+              Incoming calls from your care recipients ring this device — even when the app is closed — only if push notifications are enabled and this device is registered.
+            </Text>
+
+            {pushLoading ? (
+              <ActivityIndicator color={colors.primary} style={{ marginVertical: 12 }} />
+            ) : (
+              (() => {
+                const registered = pushPermStatus === "granted" && !!pushTokenSuffix;
+                const permOnly = pushPermStatus === "granted" && !pushTokenSuffix;
+                const bgColor = registered ? colors.background : "#1a0a0a";
+                const borderColor = registered ? colors.border : "#FF3B3044";
+                const subColor = registered ? colors.primary : permOnly ? "#FFB020" : "#FF6B6B";
+                const subText = registered
+                  ? "Enabled — this device is registered to receive calls"
+                  : permOnly
+                    ? "Permission granted, but device not registered. Tap Retry."
+                    : pushPermStatus === "denied"
+                      ? "Blocked — tap Settings to enable in your device"
+                      : "Not enabled — required to receive incoming calls";
+                const buttonLabel = pushPermStatus === "denied" ? "Settings" : permOnly ? "Retry" : "Enable";
+                return (
+                  <View style={[styles.notifToggleRow, { backgroundColor: bgColor, borderColor }]}>
+                    <View style={{ flex: 1, gap: 3 }}>
+                      <Text style={[styles.notifToggleLabel, { color: colors.text }]}>Push Notifications</Text>
+                      <Text style={[styles.notifToggleSub, { color: subColor }]}>{subText}</Text>
+                      {registered && pushTokenSuffix ? (
+                        <Text style={[styles.notifTokenText, { color: colors.mutedForeground }]}>
+                          Device token …{pushTokenSuffix}
+                        </Text>
+                      ) : null}
+                      {pushError ? (
+                        <Text style={[styles.notifTokenText, { color: "#FF6B6B" }]} numberOfLines={3}>
+                          {pushError}
+                        </Text>
+                      ) : null}
+                    </View>
+                    {registered ? (
+                      <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colors.primary + "22", alignItems: "center", justifyContent: "center" }}>
+                        <Feather name="check" size={20} color={colors.primary} />
+                      </View>
+                    ) : (
+                      <Pressable
+                        onPress={handleEnablePush}
+                        disabled={pushRequesting}
+                        style={{ backgroundColor: "#FF3B30", paddingHorizontal: 14, paddingVertical: 8, borderRadius: 10, opacity: pushRequesting ? 0.6 : 1 }}
+                      >
+                        {pushRequesting ? (
+                          <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                          <Text style={{ color: "#fff", fontSize: 13, fontWeight: "700", fontFamily: "Inter_700Bold" }}>
+                            {buttonLabel}
+                          </Text>
+                        )}
+                      </Pressable>
+                    )}
+                  </View>
+                );
+              })()
+            )}
           </View>
         </View>
 
@@ -632,4 +790,12 @@ const styles = StyleSheet.create({
   },
   logoutRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 4 },
   logoutText: { fontSize: 15, fontWeight: "600", fontFamily: "Inter_600SemiBold" },
+
+  notifToggleRow: {
+    flexDirection: "row", alignItems: "center",
+    borderRadius: 12, borderWidth: 1, padding: 14, gap: 12,
+  },
+  notifToggleLabel: { fontSize: 15, fontWeight: "600", fontFamily: "Inter_600SemiBold" },
+  notifToggleSub: { fontSize: 12, fontFamily: "Inter_400Regular" },
+  notifTokenText: { fontSize: 11, fontFamily: "Inter_400Regular", marginTop: 2 },
 });
