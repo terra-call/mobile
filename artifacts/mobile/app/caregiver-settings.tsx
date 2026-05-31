@@ -448,7 +448,17 @@ export default function CaregiverSettingsScreen() {
               Incoming calls from your care recipients ring this device — even when the app is closed — only if push notifications are enabled and this device is registered.
             </Text>
 
-            {pushLoading ? (
+            {Platform.OS === "web" ? (
+              <View style={[styles.notifToggleRow, { backgroundColor: colors.background, borderColor: colors.border }]}>
+                <View style={{ flex: 1, gap: 3 }}>
+                  <Text style={[styles.notifToggleLabel, { color: colors.text }]}>Push Notifications</Text>
+                  <Text style={[styles.notifToggleSub, { color: colors.mutedForeground }]}>
+                    Push notifications aren't available in the web preview. Open Terra Call on your tablet or phone to enable them here.
+                  </Text>
+                </View>
+                <Feather name="smartphone" size={20} color={colors.mutedForeground} />
+              </View>
+            ) : pushLoading ? (
               <ActivityIndicator color={colors.primary} style={{ marginVertical: 12 }} />
             ) : (
               (() => {
