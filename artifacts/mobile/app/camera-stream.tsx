@@ -1,8 +1,14 @@
 // TWILIO VIDEO — Phase 2 camera integration (LIVE)
 // ─────────────────────────────────────────────────────────────────────────────
-// Single-screen component used by both sides of an emergency video session:
-//   • mode=publish  → care-recipient, activates front camera and joins the room
-//   • mode=view     → caregiver, joins the room as a subscriber
+// Single-screen component used by both sides of a video session. `mode` is the
+// MEDIA role on THIS device, NOT the user's account role — either party can be
+// the publisher depending on the call direction:
+//   • mode=publish → activates the front camera and broadcasts into the room
+//   • mode=view    → joins the room as a subscriber and renders the remote feed
+// Caregiver-initiated emergency: recipient publishes, caregiver views.
+// Recipient-initiated "Call My Caregiver": caregiver publishes, recipient views.
+// The room is always keyed on the care-recipient's uid (the room "owner"),
+// passed to the server as targetUserId regardless of who publishes.
 //
 // The actual SDK (`@twilio/video-react-native-sdk`) is loaded through the
 // guarded wrapper at services/twilioVideo.ts so this file is safe to render
@@ -57,6 +63,10 @@ export default function CameraStreamScreen() {
     roomName?: string;
     receiverName?: string;
     caregiverName?: string;
+    // Explicit name of the OTHER person on the call (the one NOT holding this
+    // device). Set by the navigator so the banner/labels stay correct even when
+    // the publisher is the caregiver (recipient-initiated "Call My Caregiver").
+    otherPartyName?: string;
     receiverId?: string;
     eventId?: string;
     // RECIPIENT-INITIATED CALL ONLY — the cameraActivations docId. Server
@@ -78,10 +88,19 @@ export default function CameraStreamScreen() {
   // operation but we tolerate it gracefully).
   const eventId = params.eventId && params.eventId.length > 0 ? params.eventId : null;
   const receiverId = params.receiverId ?? null;
+  // Prefer the explicit otherPartyName param (set by every call navigator).
+  // Fall back to the legacy mode-based guess for older nav paths that don't
+  // pass it. In publish mode the "other party" is the watcher; in view mode it
+  // is the person whose camera we're subscribing to.
   const otherPartyName =
-    mode === "publish"
+    params.otherPartyName ??
+    (mode === "publish"
       ? params.caregiverName ?? "Your caregiver"
-      : params.receiverName ?? "Care recipient";
+      : params.receiverName ?? "Care recipient");
+  // Role-accurate label for audit details. Publish/view no longer maps 1:1 to
+  // recipient/caregiver (the caregiver publishes in a recipient-initiated call),
+  // so derive this from the signed-in user's role rather than the stream mode.
+  const selfLabel = user?.role === "caregiver" ? "Caregiver" : "Care-recipient";
 
   const [connecting, setConnecting] = useState(true);
   const [tokenError, setTokenError] = useState<string | null>(null);
@@ -127,13 +146,15 @@ export default function CameraStreamScreen() {
       // The same /api/video/token endpoint serves both sides. Identity is
       // re-derived server-side from the verified Firebase uid; we send it
       // here only for the local audit log. `targetUserId` is the room's
-      // care-recipient — for the publish side that's the signed-in user
-      // themselves, for the view side it's the receiverId param passed in
-      // from emergency-call.tsx. The server uses targetUserId to enforce
-      // the permittedCaregivers permission check.
+      // care-recipient (the room "owner") — independent of which side
+      // publishes video. Use the explicit receiverId param when provided
+      // (caregiver side, or the recipient-as-viewer in a recipient-initiated
+      // call); fall back to the signed-in uid for the recipient-publishes
+      // flows (emergency / caregiver-initiated) that don't pass receiverId,
+      // where the signed-in user IS the recipient. The server uses
+      // targetUserId to enforce the permittedCaregivers permission check.
       const identity = user?.id ?? `anon-${mode}`;
-      const targetUserId =
-        mode === "publish" ? (user?.id ?? "") : (receiverId ?? "");
+      const targetUserId = receiverId ?? (user?.id ?? "");
 
       if (!targetUserId) {
         if (user?.id) {
@@ -185,6 +206,49 @@ export default function CameraStreamScreen() {
       // and we still mark connection ready so the audit/event lifecycle
       // can proceed for end-to-end flow testing.
       if (isTwilioVideoAvailable && twilioRef.current) {
+        // PUBLISHER PERMISSION GATE — the broadcasting side (enableVideo +
+        // enableAudio below) needs OS camera + microphone permission. On
+        // Android, calling Twilio.connect() with enableVideo/enableAudio while
+        // CAMERA or RECORD_AUDIO is ungranted makes connect() hang forever. The
+        // caregiver tablet — now the publisher in a recipient-initiated call —
+        // has never been through the care-recipient consent flow, so request
+        // here defensively. Already-granted permissions resolve instantly.
+        if (mode === "publish" && Platform.OS !== "web") {
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
+            const { Camera } = require("expo-camera") as typeof import("expo-camera");
+            const camRes = await Camera.requestCameraPermissionsAsync();
+            const micRes = await Camera.requestMicrophonePermissionsAsync();
+            if (cancelled) return;
+            if (camRes.status !== "granted" || micRes.status !== "granted") {
+              if (user?.id) {
+                logAudit({
+                  userId: user.id,
+                  action: "camera_activation_failed",
+                  details: `Publisher permission denied — camera=${camRes.status}, microphone=${micRes.status} (room=${roomName})`,
+                });
+              }
+              setTokenError(
+                "Camera and microphone access are needed to share your video. Enable them in Settings, then try again.",
+              );
+              setTokenErrorDetail(`permissions: camera=${camRes.status}, mic=${micRes.status}`);
+              setConnecting(false);
+              return;
+            }
+          } catch (err) {
+            // expo-camera missing should not happen in a dev build that bundles
+            // the Twilio SDK; log and let connect() attempt anyway rather than
+            // hard-blocking the call.
+            const reason = err instanceof Error ? err.message : "unknown";
+            if (user?.id) {
+              logAudit({
+                userId: user.id,
+                action: "camera_permission_warmup",
+                details: `Publisher permission request threw — ${reason} (room=${roomName})`,
+              });
+            }
+          }
+        }
         try {
           // PHASE B — only the publisher (care-receiver) sends audio. The
           // viewer (caregiver) receives audio implicitly from the remote
@@ -231,7 +295,7 @@ export default function CameraStreamScreen() {
           logAudit({
             userId: user.id,
             action: "video_stream_connected",
-            details: `${mode === "publish" ? "Care-recipient" : "Caregiver"} reached camera-stream room ${roomName} (placeholder mode — no native SDK)`,
+            details: `${selfLabel} reached camera-stream room ${roomName} (placeholder mode — no native SDK)`,
             targetUserId: receiverId ?? undefined,
           });
         }
@@ -265,7 +329,7 @@ export default function CameraStreamScreen() {
         logAudit({
           userId: user.id,
           action: "video_stream_connected",
-          details: `${mode === "publish" ? "Care-recipient" : "Caregiver"} connected to Twilio Video room ${roomName}`,
+          details: `${selfLabel} connected to Twilio Video room ${roomName}`,
           targetUserId: receiverId ?? undefined,
         });
       }
@@ -379,7 +443,7 @@ export default function CameraStreamScreen() {
       logAudit({
         userId: user.id,
         action: "emergency_call_resolved",
-        details: `${mode === "publish" ? "Care-recipient" : "Caregiver"} ended the live stream (room=${roomName})`,
+        details: `${selfLabel} ended the live stream (room=${roomName})`,
         targetUserId: receiverId ?? undefined,
       });
     }
@@ -482,7 +546,7 @@ export default function CameraStreamScreen() {
             </Text>
             <Text style={styles.placeholderSub}>
               {mode === "publish"
-                ? "Your camera will broadcast to your caregiver in a custom dev build."
+                ? `Your camera will broadcast to ${otherPartyName} in a custom dev build.`
                 : `${otherPartyName}'s front camera will appear here in a custom dev build.`}
             </Text>
             <Text style={styles.placeholderHint}>

@@ -1,2 +1,3 @@
 - [Push notifications](push-notifications.md) — wakeups needed for both call directions (Firestore listeners pause in bg); Android APK needs FCM creds on EAS; PHI-safe push bodies.
 - [EAS Update / OTA](eas-update-and-builds.md) — run `eas update` via a temp workflow (not bash bg); use `--branch` + `CI=1`; tablet is `preview` channel, runtime 1.0.0 appVersion.
+- [Video call mode vs role](video-call-mode-vs-role.md) — camera-stream `mode` is media role (publish/view), NOT account role; targetUserId is always the recipient (room owner); publisher must hold camera+mic perms or Android connect hangs.

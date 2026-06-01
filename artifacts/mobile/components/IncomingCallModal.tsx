@@ -128,11 +128,13 @@ export function IncomingCallModal({
  * answering. Exported so the listener that owns the modal state can call it
  * once the Firestore status update has been written.
  *
- * IMPORTANT — camera-stream's param contract uses `mode: "view"` for the
- * subscriber side (NOT "subscribe") and reads the room's care-recipient uid
- * from `receiverId` (NOT `targetUserId`). The `activationDocId` is forwarded
- * so /api/video/token can bind the token mint to the signaled caregiverId
- * (defense against other permitted caregivers smuggling into a 1:1 call).
+ * IMPORTANT — for a RECIPIENT-INITIATED "Call My Caregiver" the caregiver
+ * answers by PUBLISHING their own camera so the recipient can see them, so we
+ * navigate with `mode: "publish"` here. The room is still keyed on the
+ * recipient's uid: `receiverId` carries it so camera-stream sends the correct
+ * `targetUserId` to /api/video/token. The `activationDocId` is forwarded so the
+ * server can bind the token mint to the signaled caregiverId (defense against
+ * other permitted caregivers smuggling into a 1:1 call).
  */
 export function navigateToCallSubscribe(
   call: IncomingCall & { activationDocId?: string },
@@ -140,10 +142,13 @@ export function navigateToCallSubscribe(
   router.push({
     pathname: "/camera-stream",
     params: {
-      mode: "view",
+      mode: "publish",
       roomName: call.roomName,
       receiverId: call.recipientId,
       receiverName: call.recipientName,
+      // The watcher is the care recipient, so the publisher's banner reads
+      // "<recipient> is watching" instead of defaulting to the caregiver.
+      otherPartyName: call.recipientName,
       ...(call.activationDocId ? { activationDocId: call.activationDocId } : {}),
     },
   });

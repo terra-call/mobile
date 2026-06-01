@@ -311,12 +311,19 @@ export default function CareReceiverHome() {
           router.push({
             pathname: "/camera-stream",
             params: {
-              mode: "publish",
+              // RECIPIENT-INITIATED CALL — the recipient now VIEWS the
+              // caregiver's camera (the caregiver publishes on answer). The
+              // room is still keyed on the recipient's uid, so camera-stream
+              // falls back to the signed-in uid for targetUserId in view mode.
+              mode: "view",
               roomName,
               caregiverName: caregiverName ?? "Caregiver",
-              // Forward the activation docId so the publisher's token mint
-              // can pass /api/video/token's tc-call activation-doc binding
-              // check (server requires it for tc-call-* rooms).
+              // The other party on this call is the caregiver, so the
+              // "Waiting for…" / stream labels name them correctly.
+              otherPartyName: caregiverName ?? "Caregiver",
+              // Forward the activation docId so the viewer's token mint can
+              // pass /api/video/token's tc-call activation-doc binding check
+              // (server requires it for tc-call-* rooms).
               activationDocId: docId,
             },
           });
