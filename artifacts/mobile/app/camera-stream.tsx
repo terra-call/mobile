@@ -36,6 +36,7 @@ import {
   markEmergencyEventVideoConnected,
 } from "@/services/emergencyEventLog";
 import { requestVideoToken, VIDEO_TOKEN_ERROR_MESSAGE } from "@/services/video";
+import { HomeCameraFeed } from "@/components/HomeCameraFeed";
 import {
   TwilioVideo,
   TwilioVideoLocalView,
@@ -461,6 +462,11 @@ export default function CameraStreamScreen() {
     !!TwilioVideoLocalView &&
     !!TwilioVideoParticipantView;
 
+  // DUAL-FEED — when a caregiver is viewing a recipient, show the recipient's
+  // Reolink "Home Camera" alongside the Twilio "Phone Camera". Only the caregiver
+  // (mode=view) with a known receiverId can pull the proxied snapshot feed.
+  const showHomeCamera = mode === "view" && !!receiverId;
+
   return (
     <View style={[styles.root, { paddingTop: topPad + 16, paddingBottom: bottomPad + 16 }]}>
       {mode === "publish" && (
@@ -470,7 +476,13 @@ export default function CameraStreamScreen() {
         </View>
       )}
 
-      <View style={styles.videoArea}>
+      <View style={showHomeCamera ? styles.feeds : styles.feedsSingle}>
+      <View style={[styles.videoArea, showHomeCamera && styles.feedHalf]}>
+        {showHomeCamera && (
+          <View style={styles.feedLabel} pointerEvents="none">
+            <Text style={styles.feedLabelText}>PHONE CAMERA</Text>
+          </View>
+        )}
         {/* Imperative TwilioVideo controller — it has no visible UI but it
             owns the room/connection. Mount it whenever the native SDK is
             available so the connect() call in the effect can target it. */}
@@ -555,6 +567,15 @@ export default function CameraStreamScreen() {
           </View>
         )}
       </View>
+      {showHomeCamera && receiverId && (
+        <View style={[styles.videoArea, styles.feedHalf]}>
+          <View style={styles.feedLabel} pointerEvents="none">
+            <Text style={styles.feedLabelText}>HOME CAMERA</Text>
+          </View>
+          <HomeCameraFeed targetUserId={receiverId} />
+        </View>
+      )}
+      </View>
 
       <View style={styles.controls}>
         <Pressable style={[styles.endBtn, mode === "publish" && styles.endBtnReceiver]} onPress={endStream}>
@@ -584,6 +605,20 @@ const styles = StyleSheet.create({
   },
   bannerDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#fff" },
   bannerText: { color: "#fff", fontSize: 12, fontWeight: "700", letterSpacing: 0.5 },
+  feeds: { flex: 1, gap: 12 },
+  feedsSingle: { flex: 1 },
+  feedHalf: { flex: 1 },
+  feedLabel: {
+    position: "absolute",
+    top: 10,
+    left: 10,
+    zIndex: 5,
+    backgroundColor: "rgba(0,0,0,0.6)",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  feedLabelText: { color: "#fff", fontSize: 11, fontWeight: "700", letterSpacing: 0.5 },
   videoArea: {
     flex: 1,
     backgroundColor: "#0a0e1c",

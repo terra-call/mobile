@@ -479,6 +479,45 @@ export default function SettingsScreen() {
           />
         </Section>
 
+        {/* ── Home Camera Section ── */}
+        <Section title="HOME CAMERA" colors={colors}>
+          <Pressable
+            style={{
+              flexDirection: "row",
+              alignItems: "center",
+              gap: 12,
+              padding: 14,
+              borderRadius: 14,
+              borderWidth: 1,
+              backgroundColor: colors.card,
+              borderColor: colors.border,
+            }}
+            onPress={() => router.push("/(care-receiver)/home-camera")}
+          >
+            <View
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: 20,
+                backgroundColor: "#51aafa22",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <Feather name="camera" size={20} color="#51aafa" />
+            </View>
+            <View style={{ flex: 1, gap: 2 }}>
+              <Text style={{ color: colors.text, fontSize: 15, fontWeight: "700", fontFamily: "Inter_700Bold" }}>
+                Home Camera Setup
+              </Text>
+              <Text style={{ color: colors.mutedForeground, fontSize: 12, fontFamily: "Inter_400Regular" }}>
+                Connect a Reolink camera as a backup video feed
+              </Text>
+            </View>
+            <Feather name="chevron-right" size={20} color={colors.mutedForeground} />
+          </Pressable>
+        </Section>
+
         {/* ── Security Section ── */}
         <Section title="SECURITY" colors={colors}>
           <Field label="New Email Address" colors={colors}>

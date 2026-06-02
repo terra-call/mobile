@@ -6,6 +6,7 @@ export default function CareReceiverLayout() {
     <Stack screenOptions={{ headerShown: false, animation: "slide_from_right" }}>
       <Stack.Screen name="index" />
       <Stack.Screen name="settings" />
+      <Stack.Screen name="home-camera" />
     </Stack>
   );
 }

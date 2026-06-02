@@ -53,7 +53,10 @@ export type AuditAction =
   | "recipient_call_answered"
   | "recipient_call_declined"
   | "recipient_call_unavailable"
-  | "recipient_call_cancelled";
+  | "recipient_call_cancelled"
+  // Reolink Home Camera
+  | "reolink_camera_configured"
+  | "reolink_camera_removed";
 
 export interface LogAuditParams {
   userId: string;
