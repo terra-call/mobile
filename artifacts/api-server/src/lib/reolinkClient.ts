@@ -175,23 +175,52 @@ function isPrivateIp(ip: string): boolean {
   return true; // not a valid IP literal → fail closed
 }
 
+// DEV/TEST ESCAPE HATCH — when REOLINK_ALLOW_PRIVATE_HOSTS="true" the SSRF guard
+// permits loopback/private/LAN addresses. This is ONLY for local development or a
+// self-hosted server that physically sits on the same network as the camera (e.g.
+// testing a Reolink at 192.168.x.x). It MUST stay unset in the Replit-hosted /
+// production environment — a cloud server can't reach a LAN anyway, and allowing
+// private targets there would re-open the SSRF hole the rest of this guard closes.
+let warnedPrivateAllowed = false;
+function allowPrivateHosts(): boolean {
+  // Hard guardrail: the escape hatch is ignored in production regardless of the
+  // env var, so a misconfigured deploy can never relax the SSRF guard. A cloud
+  // prod server can't reach a LAN anyway, so this loses no legitimate capability.
+  if (process.env.NODE_ENV === "production") return false;
+  return process.env.REOLINK_ALLOW_PRIVATE_HOSTS === "true";
+}
+
 /**
  * SSRF guard / resolver. Returns a single vetted IP literal to connect to, or
  * null if the host is disallowed. Resolving here (once) and connecting by the
  * returned IP closes the DNS-rebinding TOCTOU window: every resolved address
  * must be public, and we never re-resolve the hostname at connect time.
+ *
+ * If REOLINK_ALLOW_PRIVATE_HOSTS is set, private/loopback targets are allowed
+ * (local testing only — see the note above).
  */
 export async function resolveCameraIp(host: string): Promise<string | null> {
   if (!host) return null;
+  const allowPrivate = allowPrivateHosts();
+  if (allowPrivate && !warnedPrivateAllowed) {
+    warnedPrivateAllowed = true;
+    logger.warn(
+      "REOLINK_ALLOW_PRIVATE_HOSTS is enabled — SSRF guard permits private/LAN addresses. Do NOT use this in production.",
+    );
+  }
+
   const h = host.toLowerCase();
-  if (h === "localhost" || h.endsWith(".local") || h.endsWith(".internal")) {
+  if (!allowPrivate && (h === "localhost" || h.endsWith(".local") || h.endsWith(".internal"))) {
     return null;
   }
-  if (net.isIP(host)) return isPrivateIp(host) ? null : host;
+  if (net.isIP(host)) {
+    if (isPrivateIp(host) && !allowPrivate) return null;
+    return host;
+  }
   try {
     const results = await dns.lookup(host, { all: true });
     if (results.length === 0) return null;
-    if (!results.every((r) => !isPrivateIp(r.address))) return null;
+    if (!allowPrivate && !results.every((r) => !isPrivateIp(r.address))) return null;
     return results[0].address;
   } catch {
     return null;

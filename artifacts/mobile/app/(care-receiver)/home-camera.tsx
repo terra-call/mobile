@@ -300,12 +300,13 @@ export default function HomeCameraScreen() {
 
         <Text style={[styles.intro, { color: colors.mutedForeground }]}>
           Connect a Reolink camera so your caregiver can check in on your home as a backup
-          to your phone camera. Enter the details from your Reolink app below.
+          to your phone camera. Enter a local IP address (for same-network testing) or a
+          Reolink DDNS web address (for viewing from anywhere).
         </Text>
 
         {/* Form */}
         <View style={styles.fieldGroup}>
-          <Text style={[styles.label, { color: colors.mutedForeground }]}>Camera Web Address (Reolink DDNS)</Text>
+          <Text style={[styles.label, { color: colors.mutedForeground }]}>Camera Address (Local IP or Reolink DDNS)</Text>
           <TextInput
             style={[styles.input, { backgroundColor: colors.card, borderColor: colors.border, color: colors.text }]}
             value={host}
@@ -313,7 +314,7 @@ export default function HomeCameraScreen() {
               setHost(v);
               invalidateTest();
             }}
-            placeholder="e.g. abc123.reolink.com"
+            placeholder="192.168.1.215 or abc123.reolink.com"
             placeholderTextColor={colors.mutedForeground}
             autoCapitalize="none"
             autoCorrect={false}
@@ -385,11 +386,13 @@ export default function HomeCameraScreen() {
         {showHelp && (
           <View style={[styles.helpBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <Text style={[styles.helpText, { color: colors.mutedForeground }]}>
-              1. Open the Reolink app and select your camera.{"\n"}
-              2. Go to Settings → Network → Advanced and turn on UID/DDNS.{"\n"}
-              3. Copy the DDNS web address (it ends in .reolink.com) into Camera Web Address.{"\n"}
-              4. Make sure port forwarding is enabled for the HTTPS port (usually 443).{"\n"}
-              5. Use the same username and password you use to log in to the camera.
+              For local testing (same Wi-Fi network):{"\n"}
+              1. Find the camera's IP in the Reolink app under Settings → Network → Network Information (e.g. 192.168.1.215).{"\n"}
+              2. Enter that IP as the Camera Address and set Port to 80 (HTTP).{"\n\n"}
+              To view from anywhere (Reolink DDNS):{"\n"}
+              3. In the Reolink app, go to Settings → Network → Advanced and turn on UID/DDNS.{"\n"}
+              4. Copy the DDNS web address (it ends in .reolink.com) and enable port forwarding (usually port 443).{"\n\n"}
+              Use the same username and password you use to log in to the camera.
             </Text>
             <Pressable
               onPress={() => Linking.openURL("https://support.reolink.com/hc/en-us/articles/360007011833").catch(() => {})}
