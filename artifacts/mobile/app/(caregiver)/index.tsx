@@ -21,8 +21,15 @@ import { useCareData } from "@/contexts/CareDataContext";
 import { useColors } from "@/hooks/useColors";
 import { registerForPushNotifications } from "@/services/notifications";
 import { logAudit } from "@/services/audit";
+import { formatTimeAgo } from "@/utils/time";
 
 type FilterType = "all" | "safe" | "issues";
+
+const ALERT_LABEL: Record<string, string> = {
+  manual_emergency: "tapped I'M NOT OK",
+  emergency: "emergency — no check-in",
+  missed: "missed a check-in",
+};
 
 export default function CaregiverDashboard() {
   const { user, logout } = useAuth();
@@ -62,6 +69,21 @@ export default function CaregiverDashboard() {
       : filter === "safe"
       ? careReceivers.filter((r) => r.status === "checked-in")
       : careReceivers.filter((r) => r.status === "missed" || r.status === "emergency");
+
+  // Flatten every recipient's rolling alert history into one newest-first feed
+  // so each individual "I'M NOT OK" press shows up as its own row (in real time
+  // via the user-doc onSnapshot), with the correct alert time.
+  const alertFeed = careReceivers
+    .flatMap((r) =>
+      (r.recentAlerts ?? []).map((a, idx) => ({
+        key: a.id ?? `${r.id}-${a.at}-${idx}`,
+        name: r.name,
+        type: a.type,
+        at: a.at,
+      })),
+    )
+    .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
+    .slice(0, 15);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -174,6 +196,44 @@ export default function CaregiverDashboard() {
         renderItem={({ item }) => (
           <StatusCard receiver={item} onEmergency={() => handleEmergency(item)} />
         )}
+        ListHeaderComponent={
+          alertFeed.length > 0 ? (
+            <View
+              style={[
+                styles.alertFeed,
+                { backgroundColor: colors.card, borderColor: colors.destructive + "44" },
+              ]}
+            >
+              <View style={styles.alertFeedHeader}>
+                <Feather name="alert-triangle" size={14} color={colors.destructive} />
+                <Text style={[styles.alertFeedTitle, { color: colors.destructive }]}>
+                  Recent Alerts
+                </Text>
+              </View>
+              {alertFeed.map((a, i) => (
+                <View
+                  key={a.key}
+                  style={[
+                    styles.alertRow,
+                    i < alertFeed.length - 1 && {
+                      borderBottomWidth: 1,
+                      borderBottomColor: colors.border,
+                    },
+                  ]}
+                >
+                  <View style={[styles.alertDot, { backgroundColor: colors.destructive }]} />
+                  <Text style={[styles.alertText, { color: colors.text }]} numberOfLines={1}>
+                    <Text style={{ fontFamily: "Inter_600SemiBold" }}>{a.name}</Text>{" "}
+                    {ALERT_LABEL[a.type] ?? "raised an alert"}
+                  </Text>
+                  <Text style={[styles.alertTime, { color: colors.mutedForeground }]}>
+                    {formatTimeAgo(a.at)}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ) : null
+        }
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -181,7 +241,7 @@ export default function CaregiverDashboard() {
             tintColor={colors.primary}
           />
         }
-        scrollEnabled={!!filtered.length}
+        scrollEnabled={!!filtered.length || alertFeed.length > 0}
         ListEmptyComponent={
           loading ? null : (
             <View style={styles.empty}>
@@ -250,6 +310,35 @@ const styles = StyleSheet.create({
   },
   filterText: { fontSize: 13, fontWeight: "600", fontFamily: "Inter_600SemiBold" },
   list: { paddingHorizontal: 20, gap: 12 },
+  alertFeed: {
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginBottom: 4,
+  },
+  alertFeedHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingBottom: 8,
+  },
+  alertFeedTitle: {
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
+    fontFamily: "Inter_700Bold",
+  },
+  alertRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    paddingVertical: 9,
+  },
+  alertDot: { width: 7, height: 7, borderRadius: 4 },
+  alertText: { flex: 1, fontSize: 14, fontFamily: "Inter_400Regular" },
+  alertTime: { fontSize: 12, fontFamily: "Inter_400Regular" },
   empty: { alignItems: "center", paddingVertical: 48, paddingHorizontal: 32, gap: 16 },
   emptyIcon: {
     width: 88,

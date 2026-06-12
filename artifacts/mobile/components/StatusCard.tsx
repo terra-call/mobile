@@ -55,11 +55,20 @@ export function StatusCard({ receiver, onEmergency }: StatusCardProps) {
         <View style={styles.statusRow}>
           <Feather name={config.icon} size={12} color={config.color} />
           <Text style={[styles.statusLabel, { color: config.color }]}>{config.label}</Text>
-          {receiver.lastCheckIn && (
-            <Text style={[styles.time, { color: colors.mutedForeground }]}>
-              · {formatTimeAgo(receiver.lastCheckIn)}
-            </Text>
-          )}
+          {(() => {
+            // In EMERGENCY, show WHEN the alert was raised (lastEmergencyAt) —
+            // NOT the last check-in, which can be hours old and made the alert
+            // look stale ("3 hours ago"). Fall back to last check-in otherwise.
+            const stamp =
+              receiver.status === "emergency" && receiver.lastEmergencyAt
+                ? receiver.lastEmergencyAt
+                : receiver.lastCheckIn;
+            return stamp ? (
+              <Text style={[styles.time, { color: colors.mutedForeground }]}>
+                · {formatTimeAgo(stamp)}
+              </Text>
+            ) : null;
+          })()}
         </View>
         {receiver.phone && (
           <Text style={[styles.phone, { color: colors.mutedForeground }]}>{receiver.phone}</Text>

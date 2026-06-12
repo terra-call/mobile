@@ -5,6 +5,7 @@ import {
   getDoc,
   onSnapshot,
   query,
+  runTransaction,
   serverTimestamp,
   updateDoc,
   where,
@@ -23,6 +24,21 @@ import { useAuth } from "./AuthContext";
 
 export type ReceiverStatus = "checked-in" | "missed" | "emergency" | "unknown";
 
+// A single entry in a care recipient's rolling alert history. Stored as a
+// capped array on the recipient's user doc (NOT the admin-only `events`
+// collection) so caregivers — who already subscribe to the user doc — can see
+// each alert individually in real time without extra Firestore rules/indexes.
+// `at` is an ISO-8601 UTC string (serverTimestamp() cannot live inside an
+// array element, so we record the client time; clock skew is display-only).
+export interface AlertEntry {
+  // Stable unique id per alert (used as the React list key in the caregiver
+  // feed). Optional for backward-compatibility with any entries written before
+  // ids were added — the feed falls back to a composite key in that case.
+  id?: string;
+  type: "manual_emergency" | "emergency" | "missed";
+  at: string;
+}
+
 export interface CareReceiver {
   id: string;
   name: string;
@@ -33,6 +49,12 @@ export interface CareReceiver {
   location?: { lat: number; lng: number };
   missedWindowMin: number;
   escalationWindowMin: number;
+  // Newest-first list of recent alerts raised by this recipient.
+  recentAlerts: AlertEntry[];
+  // Server timestamp of the most recent emergency, as an ISO string. Drives the
+  // "· X min ago" label on the status card while in EMERGENCY (so it reflects
+  // the alert time, not the stale last check-in time).
+  lastEmergencyAt: string | null;
 }
 
 interface CareDataContextValue {
@@ -64,6 +86,8 @@ const DEMO_RECEIVERS: CareReceiver[] = [
     location: { lat: 37.7749, lng: -122.4194 },
     missedWindowMin: DEFAULT_MISSED_MIN,
     escalationWindowMin: DEFAULT_ESCALATION_MIN,
+    recentAlerts: [],
+    lastEmergencyAt: null,
   },
   {
     id: "demo2",
@@ -75,6 +99,8 @@ const DEMO_RECEIVERS: CareReceiver[] = [
     location: { lat: 37.7761, lng: -122.4186 },
     missedWindowMin: DEFAULT_MISSED_MIN,
     escalationWindowMin: DEFAULT_ESCALATION_MIN,
+    recentAlerts: [],
+    lastEmergencyAt: null,
   },
   {
     id: "demo3",
@@ -86,6 +112,8 @@ const DEMO_RECEIVERS: CareReceiver[] = [
     location: { lat: 37.7739, lng: -122.421 },
     missedWindowMin: DEFAULT_MISSED_MIN,
     escalationWindowMin: DEFAULT_ESCALATION_MIN,
+    recentAlerts: [],
+    lastEmergencyAt: null,
   },
 ];
 
@@ -172,6 +200,27 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
                   ? ts.toDate().toISOString()
                   : new Date(ts).toISOString();
             }
+            // Parse the rolling alert history (newest-first) so the caregiver
+            // dashboard can show each alert individually, in real time.
+            const rawAlerts = Array.isArray(data.recentAlerts)
+              ? data.recentAlerts
+              : [];
+            const recentAlerts: AlertEntry[] = rawAlerts
+              .filter(
+                (a: unknown): a is AlertEntry =>
+                  !!a &&
+                  typeof (a as AlertEntry).at === "string" &&
+                  typeof (a as AlertEntry).type === "string",
+              )
+              .map((a: AlertEntry) => ({ id: a.id, type: a.type, at: a.at }));
+            const le = data.lastEmergencyAt;
+            let lastEmergencyAt: string | null = null;
+            if (le) {
+              lastEmergencyAt =
+                typeof le.toDate === "function"
+                  ? le.toDate().toISOString()
+                  : new Date(le).toISOString();
+            }
             return {
               id: d.id,
               name: data.name ?? "Unknown",
@@ -184,6 +233,8 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
                 : undefined,
               missedWindowMin: missed,
               escalationWindowMin: escalation,
+              recentAlerts,
+              lastEmergencyAt,
             };
           });
           setCareReceivers(liveReceivers);
@@ -341,12 +392,63 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
     const receiverName = user.name ?? "Care Recipient";
 
     // Mark status in Firestore so caregiver dashboards update in real time.
-    // Also read smsConsent so we know whether to include SMS in the fallback.
+    // We read the doc first to (a) pull smsConsent for the SMS fallback and
+    // (b) read the existing recentAlerts history so we can APPEND this alert
+    // (newest-first, capped) rather than overwrite it — that's what makes each
+    // "I'M NOT OK" press show up individually on the caregiver dashboard.
     let smsConsent = false;
     if (isFirebaseConfigured && db) {
-      await updateDoc(doc(db, "users", user.id), { status: "emergency" });
-      const snap = await getDoc(doc(db, "users", user.id)).catch(() => null);
-      if (snap?.exists()) smsConsent = snap.data().smsConsent ?? false;
+      const database = db;
+      const ref = doc(database, "users", user.id);
+      const entry: AlertEntry = {
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+        type: "manual_emergency",
+        at: new Date().toISOString(),
+      };
+      // Append atomically inside a transaction so rapid repeated presses can't
+      // lose-update each other (a plain getDoc→updateDoc would let two
+      // concurrent presses both read the same array and clobber one entry).
+      // The transaction also reads smsConsent for the SMS fallback below.
+      try {
+        smsConsent = await runTransaction(database, async (tx) => {
+          const snap = await tx.get(ref);
+          let prevAlerts: AlertEntry[] = [];
+          let consent = false;
+          if (snap.exists()) {
+            const dat = snap.data();
+            consent = dat.smsConsent ?? false;
+            if (Array.isArray(dat.recentAlerts)) {
+              prevAlerts = dat.recentAlerts.filter(
+                (a: unknown): a is AlertEntry =>
+                  !!a &&
+                  typeof (a as AlertEntry).at === "string" &&
+                  typeof (a as AlertEntry).type === "string",
+              );
+            }
+          }
+          const recentAlerts = [entry, ...prevAlerts].slice(0, 20);
+          tx.update(ref, {
+            status: "emergency",
+            lastEmergencyAt: serverTimestamp(),
+            recentAlerts,
+          });
+          return consent;
+        });
+      } catch {
+        // Transaction failed (offline / contention exhausted). Fall back to a
+        // best-effort direct write so the emergency status + this alert still
+        // land — the caregiver dashboard updating is more important than a
+        // perfectly de-duplicated history in this rare path.
+        try {
+          await updateDoc(ref, {
+            status: "emergency",
+            lastEmergencyAt: serverTimestamp(),
+            recentAlerts: [entry],
+          });
+        } catch {
+          /* non-fatal — push/SMS fallback below still fires */
+        }
+      }
     }
 
     // Suppress local notification flags so we don't fire a missed alert too
