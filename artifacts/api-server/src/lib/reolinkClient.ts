@@ -322,9 +322,14 @@ export async function fetchSnapshot(
     tokenCache.delete(cacheKey);
   }
 
+  // Prefer the scheme that matches the port (80 → http, else https), then fall
+  // back to the other. Local cameras typically expose plain HTTP on :80; trying
+  // http first there avoids a wasted TLS handshake against a non-TLS port.
+  const preferred: Scheme = port === 80 ? "http" : "https";
+  const fallback: Scheme = preferred === "https" ? "http" : "https";
   const order: Scheme[] = cached
     ? [cached.scheme, cached.scheme === "https" ? "http" : "https"]
-    : ["https", "http"];
+    : [preferred, fallback];
 
   let lastError: SnapshotError = "unreachable";
   for (const scheme of order) {
