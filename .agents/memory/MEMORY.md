@@ -3,3 +3,4 @@
 - [Caregiver alert history](caregiver-alert-history.md) — per-press alerts live on recipient user doc (events is admin-only); atomic append via runTransaction; emergency time uses lastEmergencyAt.
 - [Video call mode vs role](video-call-mode-vs-role.md) — camera-stream `mode` is media role (publish/view), NOT account role; targetUserId is always the recipient (room owner); publisher must hold camera+mic perms or Android connect hangs.
 - [Reolink Home Camera](reolink-home-camera.md) — server-proxied JPEG snapshots (no cloud API); creds AES-GCM-only in Firestore; any user-host proxy MUST block IPv4-mapped IPv6 + resolve-once-connect-by-IP (DNS-rebind TOCTOU).
+- [terra-call.com website](terra-call-website.md) — public site is EXTERNAL (Vibe+Cloudflare), not in repo; verify deploys by JS bundle hash (not last-modified); purge Cloudflare; Twilio A2P needs no-JS business info + matching CTA + privacy "never shared/sold" phrase.
