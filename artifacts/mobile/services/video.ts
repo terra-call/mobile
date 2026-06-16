@@ -84,7 +84,7 @@ export async function initiateReceiverCall(input: {
   roomName: string;
   recipientName?: string;
   caregiverName?: string;
-}): Promise<{ ok: boolean; signalDocId?: string; error?: string }> {
+}): Promise<{ ok: boolean; signalDocId?: string; pushSent?: boolean; error?: string }> {
   if (!API_BASE) return { ok: false, error: "API server URL not configured" };
 
   let idToken: string;
@@ -136,8 +136,12 @@ export async function initiateReceiverCall(input: {
       }
       return { ok: false, error: serverMessage ?? `Server returned ${res.status}` };
     }
-    const data = (await res.json()) as { ok?: boolean; signalDocId?: string };
-    return { ok: !!data.ok, signalDocId: data.signalDocId };
+    const data = (await res.json()) as {
+      ok?: boolean;
+      signalDocId?: string;
+      pushSent?: boolean;
+    };
+    return { ok: !!data.ok, signalDocId: data.signalDocId, pushSent: data.pushSent };
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to start call";
     return { ok: false, error: message };
@@ -165,7 +169,7 @@ export async function initiateCameraActivation(input: {
   roomName: string;
   /** uid of the care-recipient — used by the server for permission check. */
   targetUserId: string;
-}): Promise<{ ok: boolean; videoConfigured?: boolean; error?: string }> {
+}): Promise<{ ok: boolean; videoConfigured?: boolean; pushSent?: boolean; error?: string }> {
   if (!API_BASE) return { ok: false, error: "API server URL not configured" };
 
   let idToken: string;
@@ -214,8 +218,16 @@ export async function initiateCameraActivation(input: {
       }
       return { ok: false, error: serverMessage ?? `Server returned ${res.status}` };
     }
-    const data = (await res.json()) as { ok?: boolean; videoConfigured?: boolean };
-    return { ok: !!data.ok, videoConfigured: data.videoConfigured };
+    const data = (await res.json()) as {
+      ok?: boolean;
+      videoConfigured?: boolean;
+      pushSent?: boolean;
+    };
+    return {
+      ok: !!data.ok,
+      videoConfigured: data.videoConfigured,
+      pushSent: data.pushSent,
+    };
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to start camera";
     return { ok: false, error: message };

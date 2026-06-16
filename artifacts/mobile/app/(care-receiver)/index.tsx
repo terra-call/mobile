@@ -398,6 +398,14 @@ export default function CareReceiverHome() {
       details: `Care recipient initiated call to caregiver (room=${roomName}, caregiverId=${caregiverId}, docId=${result.signalDocId})`,
       targetUserId: caregiverId,
     }).catch(() => {});
+    // AUDIT — record the best-effort push wakeup outcome. When no valid token
+    // is on file the server falls back to the Firestore signal only.
+    logAudit({
+      userId: user.id,
+      action: "recipient_call_push_attempted",
+      details: `Caregiver call push wakeup ${result.pushSent ? "dispatched via Expo" : "skipped (no valid token) — relying on Firestore signal"} (room=${roomName}, caregiverId=${caregiverId})`,
+      targetUserId: caregiverId,
+    }).catch(() => {});
   };
 
   const handleCancelCall = async () => {

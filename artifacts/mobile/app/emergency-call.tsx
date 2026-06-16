@@ -173,12 +173,14 @@ export default function EmergencyCallScreen() {
       return;
     }
 
-    // AUDIT + EVENTS — push successfully dispatched to receiver.
+    // AUDIT + EVENTS — activation signaled. The Firestore signal is always
+    // written on success; the push is a best-effort wakeup. Record which path
+    // actually carried the wakeup so the trail shows token-missing fallbacks.
     if (user?.id) {
       logAudit({
         userId: user.id,
         action: "camera_activation_push_sent",
-        details: `Camera activation push dispatched to ${receiverName ?? receiverId} (room=${roomName})`,
+        details: `Camera activation signaled to ${receiverName ?? receiverId} — push wakeup ${result.pushSent ? "dispatched via Expo" : "skipped (no valid token) — relying on Firestore signal"} (room=${roomName})`,
         targetUserId: receiverId,
       });
     }

@@ -388,10 +388,14 @@ router.post(
     // on devices with the app foregrounded or recently backgrounded.
     let pushSent = false;
     if (receiverPushToken && receiverPushToken.startsWith("ExponentPushToken")) {
-      const title = "Camera Activation — Emergency";
-      const body = `${caregiverName ?? "Your caregiver"} needs to see ${receiverName ?? "you"} now. Your front camera is being activated.`;
+      // PHI hygiene (per replit.md): title/body are generic with NO names.
+      // The caregiver name rides in the silent `data` payload only, shown
+      // in-app once the device is unlocked — never on a locked screen.
+      const title = "Incoming Video Call";
+      const body = "Tap to answer";
       const pushResult = await sendPush([receiverPushToken], title, body, {
         type: "camera_activate",
+        initiatedBy: "caregiver",
         roomName,
         caregiverName: caregiverName ?? "Caregiver",
         // Defensive: include the intended receiver UID so the mobile listener
@@ -598,10 +602,11 @@ router.post(
           } | null)?.fields?.expoPushToken?.stringValue ?? "";
 
         if (caregiverPushToken && caregiverPushToken.startsWith("ExponentPushToken")) {
-          const title = "Incoming Call";
+          const title = "Incoming Video Call";
           const body = "Tap to answer";
           const pushResult = await sendPush([caregiverPushToken], title, body, {
-            type: "recipient_call",
+            type: "incoming_call",
+            initiatedBy: "recipient",
             roomName,
             recipientName: recipientName ?? "Care recipient",
             recipientId: auth.uid,

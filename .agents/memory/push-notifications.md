@@ -37,6 +37,30 @@ rebuilding the APK; existing installs start receiving pushes immediately.
 - Without FCM creds, `registerForPushNotifications` can fail silently
   ("Default FirebaseApp is not initialized") and no token saves to Firestore.
 
+# Cold-start taps need getLastNotificationResponseAsync (both directions)
+
+`addNotificationResponseReceivedListener` does NOT fire for the notification
+that LAUNCHED a killed app. So a tap-to-open from a fully-closed app is lost
+unless each direction's listener also calls
+`Notifications.getLastNotificationResponseAsync()` once per process.
+
+**Why:** chased "tap does nothing when app was closed" — warm-path listeners
+worked, cold start silently dropped the launch tap because nothing consulted the
+launching response.
+
+**How to apply:**
+- Guard once-per-process with a module-level flag, but only SET it once the
+  intended role/account is loaded (gate recipient cold start on
+  `role === "care-receiver"`, caregiver on `"caregiver"`) so a different account
+  active first doesn't burn the flag.
+- Cold-start navigation races the root NavigationGuard's initial
+  `router.replace` to the dashboard — defer the nav (~1.2s) so the guard lands
+  first, then push the modal screen on top. Own that timer in the cold-start
+  `useEffect` (store id, clear on cleanup) so a logout/role change during the
+  window cancels it — never a fire-and-forget `setTimeout` deep in a handler.
+- Caregiver incoming-call surfaces a modal (state), not navigation, so it needs
+  no delay; only the recipient camera-stream NAVIGATION needs the settle delay.
+
 # PHI hygiene for push
 
 Lock-screen-visible title/body must be generic with NO names ("Incoming Call" /

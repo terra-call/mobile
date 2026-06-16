@@ -50,6 +50,8 @@ export type AuditAction =
   | "unauthorized_token_request"
   // Recipient-initiated call flow ("Call My Caregiver" button)
   | "recipient_initiated_call"
+  | "recipient_call_push_attempted"
+  | "recipient_call_received"
   | "recipient_call_answered"
   | "recipient_call_declined"
   | "recipient_call_unavailable"
