@@ -157,3 +157,13 @@ overrides:
   # drizzle-kit uses esbuild internally on an older version that's vulnerable, this overrides it
   "@esbuild-kit/esm-loader": "npm:tsx@^4.21.0"
   esbuild: "0.27.3"
+  # Security: force patched versions of vulnerable transitive deps (Replit scanner).
+  # All stay within the parent's declared range so no breaking API change:
+  #   axios (via twilio ^1.13.5) — fixes prototype-pollution/SSRF CVEs (fixed <=1.16.0)
+  #   protobufjs (via @grpc/proto-loader ^7.2.5) — fixes UTF-8 decoder CVE (fixed in 7.x)
+  #   @grpc/grpc-js (via @firebase/firestore ~1.9.0) — fixes HTTP/2 crash CVEs (fixed 1.9.16); kept in 1.9.x to honor firestore's range
+  #   @xmldom/xmldom (via @expo/plist, plist) — fixes XML injection/DoS CVEs (fixed 0.8.13)
+  axios: "^1.18.0"
+  protobufjs: "^7.6.4"
+  "@grpc/grpc-js": "1.9.16"
+  "@xmldom/xmldom": "0.8.13"

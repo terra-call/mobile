@@ -1,5 +1,6 @@
 - [Push notifications](push-notifications.md) — wakeups needed for both call directions (Firestore listeners pause in bg); Android APK needs FCM creds on EAS; PHI-safe push bodies.
 - [EAS Update / OTA](eas-update-and-builds.md) — run `eas update` via a temp workflow (not bash bg); use `--branch` + `CI=1`; tablet is `preview` channel, runtime 1.0.0 appVersion.
+- [pnpm overrides](pnpm-overrides.md) — patch vulnerable transitive deps via overrides; caret jumps past parent's range so pin exact when parent uses `~x.y`; re-grep lockfile after install.
 - [Caregiver alert history](caregiver-alert-history.md) — per-press alerts live on recipient user doc (events is admin-only); atomic append via runTransaction; emergency time uses lastEmergencyAt.
 - [Video call mode vs role](video-call-mode-vs-role.md) — camera-stream `mode` is media role (publish/view), NOT account role; targetUserId is always the recipient (room owner); publisher must hold camera+mic perms or Android connect hangs.
 - [Reolink Home Camera](reolink-home-camera.md) — server-proxied JPEG snapshots (no cloud API); creds AES-GCM-only in Firestore; any user-host proxy MUST block IPv4-mapped IPv6 + resolve-once-connect-by-IP (DNS-rebind TOCTOU).
