@@ -8,7 +8,6 @@ import { useAuth } from "@/contexts/AuthContext";
 import { logAudit } from "@/services/audit";
 import {
   createEmergencyEvent,
-  markEmergencyEventDismissed,
   markEmergencyEventUnanswered,
 } from "@/services/emergencyEventLog";
 import {
@@ -19,17 +18,10 @@ import {
   type CameraConsent,
 } from "@/services/video";
 
-// TWILIO VIDEO — Phase 2 camera integration
-// If the caregiver presses "Call Their Device" and there is no answer within
-// this many milliseconds, the app checks the receiver's stored consent and,
-// if granted, asks the server to activate the receiver's front camera.
-const UNANSWERED_THRESHOLD_MS = 15_000;
-
 export default function EmergencyCallScreen() {
-  const { receiverName, receiverId, receiverPhone } = useLocalSearchParams<{
+  const { receiverName, receiverId } = useLocalSearchParams<{
     receiverName?: string;
     receiverId?: string;
-    receiverPhone?: string;
   }>();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
@@ -40,10 +32,7 @@ export default function EmergencyCallScreen() {
   const fadeIn = useRef(new Animated.Value(0)).current;
 
   // TWILIO VIDEO — Phase 2 camera integration
-  const [callState, setCallState] = useState<"idle" | "calling" | "activating" | "no_consent">("idle");
-  const [secondsRemaining, setSecondsRemaining] = useState(15);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const activationStartedRef = useRef(false);
+  const [callState, setCallState] = useState<"idle" | "activating" | "no_consent">("idle");
   // EMERGENCY CALL FLOW — events doc id from createEmergencyEvent. We carry
   // it through the lifecycle so each subsequent state change patches the
   // SAME row instead of writing a new one.
@@ -52,6 +41,11 @@ export default function EmergencyCallScreen() {
   // True once the call reaches a terminal state (resolved/dismissed) so we
   // don't double-log dismissal on unmount after a successful resolve.
   const lifecycleClosedRef = useRef(false);
+  // Synchronous re-entry guard for startVideoCall. `callState` is React state
+  // and won't flip until the next render, so two rapid taps could both pass an
+  // idle check and create duplicate events/activations before the first await
+  // resolves. This ref blocks the second tap immediately.
+  const startingRef = useRef(false);
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
   const bottomPad = Platform.OS === "web" ? 34 : insets.bottom;
@@ -79,7 +73,6 @@ export default function EmergencyCallScreen() {
 
     return () => {
       p1.stop(); p2.stop(); p3.stop();
-      if (timerRef.current) clearInterval(timerRef.current);
     };
   }, []);
 
@@ -95,34 +88,6 @@ export default function EmergencyCallScreen() {
   };
 
   // TWILIO VIDEO — Phase 2 camera integration
-  // After the caregiver dials the receiver's device, start a 15-second
-  // unanswered-call timer. When it expires, check the receiver's consent and
-  // either activate the camera or surface a "no consent" state.
-  const startUnansweredTimer = () => {
-    if (timerRef.current) clearInterval(timerRef.current);
-    setCallState("calling");
-    setSecondsRemaining(15);
-
-    let elapsed = 0;
-    timerRef.current = setInterval(() => {
-      elapsed += 1;
-      const remaining = Math.max(0, 15 - elapsed);
-      setSecondsRemaining(remaining);
-
-      if (elapsed >= UNANSWERED_THRESHOLD_MS / 1000) {
-        if (timerRef.current) {
-          clearInterval(timerRef.current);
-          timerRef.current = null;
-        }
-        if (!activationStartedRef.current) {
-          activationStartedRef.current = true;
-          attemptCameraActivation();
-        }
-      }
-    }, 1000);
-  };
-
-  // TWILIO VIDEO — Phase 2 camera integration
   // 15 seconds elapsed without an answer — read the receiver's stored consent
   // and either notify them to activate their camera, or show "not consented".
   const attemptCameraActivation = async () => {
@@ -131,6 +96,7 @@ export default function EmergencyCallScreen() {
     if (!receiverId) {
       Alert.alert("Cannot activate camera", "Receiver information is missing.");
       setCallState("idle");
+      startingRef.current = false;
       return;
     }
 
@@ -157,13 +123,14 @@ export default function EmergencyCallScreen() {
 
     if (consent !== "granted") {
       setCallState("no_consent");
-      // EVENTS — close out the lifecycle row: timer hit zero, no activation
-      // happened because consent wasn't granted.
+      // EVENTS — close out the lifecycle row: no activation happened because
+      // consent wasn't granted.
       markEmergencyEventUnanswered(eventIdRef.current, {
         cameraActivated: false,
         consentStatus: consent,
       });
       lifecycleClosedRef.current = true;
+      startingRef.current = false;
       return;
     }
 
@@ -202,7 +169,7 @@ export default function EmergencyCallScreen() {
       });
       lifecycleClosedRef.current = true;
       setCallState("idle");
-      activationStartedRef.current = false;
+      startingRef.current = false;
       return;
     }
 
@@ -237,45 +204,36 @@ export default function EmergencyCallScreen() {
     });
   };
 
-  // TWILIO VIDEO — Phase 2 camera integration
-  // Wraps the existing tel: dialer call so we can also start the unanswered
-  // timer in parallel. Native dialer takes over the screen, so when the
-  // caregiver returns to this screen the timer may have already elapsed.
-  // The timer is only started AFTER the dialer successfully opens, so a
-  // failed dial does not silently trigger a camera activation.
-  const callDevice = async () => {
+  // TWILIO VIDEO — the in-app video session IS the communication channel.
+  // Tapping the button opens the emergency lifecycle and asks the server to
+  // activate the care recipient's camera (gated by their stored consent). NO
+  // native phone dialer is triggered: a `tel:` call would launch the OS dialer
+  // overlay on top of the live video and block the feed. 911 remains a real
+  // phone call via the separate CALL 911 button.
+  const startVideoCall = async () => {
+    // Block rapid double-taps synchronously (see startingRef above).
+    if (startingRef.current) return;
+    startingRef.current = true;
+
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
 
-    if (!receiverPhone || !receiverPhone.trim()) {
-      Alert.alert(
-        "No Phone Number",
-        `${receiverName ?? "This care recipient"} hasn't added a phone number to their profile yet.`
-      );
+    if (!receiverId) {
+      Alert.alert("Cannot start video call", "Care recipient information is missing.");
+      startingRef.current = false;
       return;
     }
 
-    const digits = receiverPhone.replace(/\D/g, "");
-    const url = `tel:${digits}`;
-    const canOpen = await Linking.canOpenURL(url).catch(() => false);
+    // Flip to "activating" immediately so the button disables on the next
+    // render too (belt-and-suspenders with startingRef).
+    setCallState("activating");
 
-    if (!canOpen) {
-      Alert.alert("Call Device", `Please dial ${receiverPhone} manually.`);
-      return;
-    }
-
-    try {
-      await Linking.openURL(url);
-    } catch {
-      Alert.alert("Call Device", `Could not open dialer. Please dial ${receiverPhone} manually.`);
-      return;
-    }
-
-    // EMERGENCY CALL FLOW — open the lifecycle:
+    // EMERGENCY CALL FLOW — open the lifecycle BEFORE activating the camera:
     //   1. AUDIT log "emergency_call_initiated"
-    //   2. Create the `events` collection row that subsequent state changes
-    //      will patch (unanswered → video_connected → resolved/dismissed).
-    // Both are fire-and-forget — they MUST NOT block the dialer or timer.
-    if (user?.id && receiverId) {
+    //   2. Create the `events` row that later state changes patch
+    //      (unanswered → video_connected → resolved/dismissed).
+    // Await the event creation so eventIdRef is set before
+    // attemptCameraActivation patches the same row.
+    if (user?.id) {
       const roomName = buildVideoRoomName(receiverId);
       roomNameRef.current = roomName;
       lifecycleClosedRef.current = false;
@@ -283,45 +241,22 @@ export default function EmergencyCallScreen() {
       logAudit({
         userId: user.id,
         action: "emergency_call_initiated",
-        details: `Caregiver tapped "Call Their Device" for ${receiverName ?? receiverId} (room=${roomName})`,
+        details: `Caregiver started a video call with ${receiverName ?? receiverId} (room=${roomName})`,
         targetUserId: receiverId,
       });
 
-      createEmergencyEvent({
-        caregiverId: user.id,
-        careReceiverId: receiverId,
-        roomName,
-      }).then((id) => {
-        eventIdRef.current = id;
-      });
+      try {
+        eventIdRef.current = await createEmergencyEvent({
+          caregiverId: user.id,
+          careReceiverId: receiverId,
+          roomName,
+        });
+      } catch {
+        /* non-fatal — proceed with activation even if the event row fails */
+      }
     }
 
-    // Dialer opened successfully — only NOW start the 15s unanswered timer.
-    activationStartedRef.current = false;
-    startUnansweredTimer();
-  };
-
-  const cancelTimer = () => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-    // EMERGENCY CALL FLOW — caregiver dismissed BEFORE the 15s timer
-    // elapsed. Patch the events doc + write an audit row so the trail
-    // shows the call ended cleanly without escalation.
-    if (!lifecycleClosedRef.current && eventIdRef.current && user?.id) {
-      logAudit({
-        userId: user.id,
-        action: "emergency_call_dismissed",
-        details: `Caregiver cancelled the unanswered-call timer before camera activation (room=${roomNameRef.current ?? "?"})`,
-        targetUserId: receiverId,
-      });
-      markEmergencyEventDismissed(eventIdRef.current);
-      lifecycleClosedRef.current = true;
-    }
-    activationStartedRef.current = false;
-    setCallState("idle");
-    setSecondsRemaining(15);
+    await attemptCameraActivation();
   };
 
   return (
@@ -357,46 +292,6 @@ export default function EmergencyCallScreen() {
           <Text style={styles.receiverStatus}>Requires immediate assistance</Text>
 
           {/* TWILIO VIDEO — Phase 2 camera integration: state banners */}
-          {callState === "calling" && (
-            <>
-              {/* Prominent countdown — large circular ring with the seconds
-                  remaining. Mirrors the audit/event lifecycle: when the
-                  number hits zero, attemptCameraActivation fires. The ring
-                  changes from green → amber → red as time runs out so the
-                  caregiver gets an unmistakable visual cue. */}
-              <View
-                style={[
-                  styles.countdownRing,
-                  secondsRemaining <= 5 && styles.countdownRingUrgent,
-                  secondsRemaining > 5 && secondsRemaining <= 10 && styles.countdownRingWarn,
-                ]}
-                accessibilityRole="timer"
-                accessibilityLabel={`Camera will activate in ${secondsRemaining} seconds`}
-                accessibilityLiveRegion="polite"
-              >
-                <Text
-                  style={[
-                    styles.countdownNumber,
-                    secondsRemaining <= 5 && styles.countdownNumberUrgent,
-                    secondsRemaining > 5 && secondsRemaining <= 10 && styles.countdownNumberWarn,
-                  ]}
-                >
-                  {secondsRemaining}
-                </Text>
-                <Text style={styles.countdownLabel}>SECONDS</Text>
-              </View>
-
-              <View style={styles.timerBanner}>
-                <Feather name="phone-call" size={14} color="#22FF6E" />
-                <Text style={styles.timerText}>
-                  Calling — activating camera if no answer
-                </Text>
-                <Pressable onPress={cancelTimer} hitSlop={8}>
-                  <Text style={styles.timerCancel}>Cancel</Text>
-                </Pressable>
-              </View>
-            </>
-          )}
           {callState === "activating" && (
             <View style={styles.timerBanner}>
               <Feather name="video" size={14} color="#22FF6E" />
@@ -420,13 +315,13 @@ export default function EmergencyCallScreen() {
           </Pressable>
 
           <Pressable
-            style={[styles.callDevice, callState === "calling" && styles.callDeviceActive]}
-            onPress={callDevice}
-            disabled={callState === "calling" || callState === "activating"}
+            style={[styles.callDevice, callState === "activating" && styles.callDeviceActive]}
+            onPress={startVideoCall}
+            disabled={callState === "activating"}
           >
-            <Feather name="smartphone" size={20} color="#FF3B30" />
+            <Feather name="video" size={20} color="#FF3B30" />
             <Text style={styles.callDeviceText}>
-              {callState === "calling" ? "Calling…" : "Call Their Device"}
+              {callState === "activating" ? "Starting…" : "Start Video Call"}
             </Text>
           </Pressable>
 
@@ -486,53 +381,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
   },
   receiverStatus: { fontSize: 16, color: "#FF3B30", textAlign: "center" },
-  // Prominent countdown ring — tracks the 15s unanswered window. Default is
-  // the green Terra Call accent. countdownRingWarn (≤10s) shifts to amber,
-  // countdownRingUrgent (≤5s) shifts to the same red as CALL 911 so the
-  // caregiver instinctively understands time is almost up.
-  countdownRing: {
-    alignSelf: "center",
-    width: 132,
-    height: 132,
-    borderRadius: 66,
-    borderWidth: 4,
-    borderColor: "#22FF6E",
-    backgroundColor: "rgba(34, 255, 110, 0.06)",
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: 12,
-    shadowColor: "#22FF6E",
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.55,
-    shadowRadius: 18,
-    elevation: 10,
-  },
-  countdownRingWarn: {
-    borderColor: "#FFB347",
-    backgroundColor: "rgba(255, 179, 71, 0.08)",
-    shadowColor: "#FFB347",
-  },
-  countdownRingUrgent: {
-    borderColor: "#FF3B30",
-    backgroundColor: "rgba(255, 59, 48, 0.1)",
-    shadowColor: "#FF3B30",
-  },
-  countdownNumber: {
-    fontSize: 56,
-    fontWeight: "900",
-    color: "#22FF6E",
-    lineHeight: 60,
-    fontVariant: ["tabular-nums"],
-  },
-  countdownNumberWarn: { color: "#FFB347" },
-  countdownNumberUrgent: { color: "#FF3B30" },
-  countdownLabel: {
-    fontSize: 9,
-    fontWeight: "700",
-    letterSpacing: 2,
-    color: "rgba(255,255,255,0.55)",
-    marginTop: 2,
-  },
   timerBanner: {
     flexDirection: "row",
     alignItems: "center",
@@ -550,13 +398,6 @@ const styles = StyleSheet.create({
     color: "rgba(255,255,255,0.85)",
     fontSize: 12,
     fontWeight: "500",
-  },
-  timerCancel: {
-    color: "#22FF6E",
-    fontSize: 12,
-    fontWeight: "700",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
   },
   noConsentBanner: {
     flexDirection: "row",

@@ -24,12 +24,20 @@ every navigator; derive self-label from `user.role`, not `mode`.
 direction (so the caregiver publishes) silently sent the caregiver's uid as
 targetUserId and broke the token mint + showed the wrong banner name.
 
-# Publisher must hold camera+mic OS perms or Android connect hangs
+# Both sides need mic OS perm (calls are two-way audio); publisher also needs camera
 
-Whichever device publishes (`enableVideo`/`enableAudio` true) needs OS CAMERA +
-RECORD_AUDIO. On Android, `Twilio.connect()` with those enabled but ungranted
-hangs forever (stuck on "Joining room…"). The recipient gets perms via the
-consent flow, but the caregiver tablet does not — so the publish path in
-camera-stream lazily `require("expo-camera")` and requests both perms before
-connect, bailing with a visible error if denied. Already-granted perms are a
-no-op, so this is safe for the recipient-publish flows too.
+Calls are two-way audio: BOTH the publish and view sides connect with
+`enableAudio: true` and must therefore hold OS RECORD_AUDIO. Only the publisher
+also needs CAMERA (`enableVideo` is true only for `mode === "publish"`). On
+Android, `Twilio.connect()` with audio/video enabled but the matching OS perm
+ungranted hangs forever (stuck on "Joining room…"), so camera-stream lazily
+`require("expo-camera")` and requests perms *before* connect on every native
+platform: mic on both modes, camera only when publishing — bailing with a
+visible error if denied. Already-granted perms are a no-op.
+
+**Why:** the viewer originally connected audio-only-off, so the caregiver could
+see but not talk to the recipient (and vice-versa). Enabling remote+local audio
+on both sides requires the viewer's mic perm too, or the Android hang reappears
+on the viewer. Speaker routing/remote audio is reinforced in `onRoomDidConnect`
+(`toggleSoundSetup(true)` + `setRemoteAudioEnabled(true)`) and in
+`onParticipantAddedAudioTrack` for late-joining tracks.

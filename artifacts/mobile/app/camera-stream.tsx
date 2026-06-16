@@ -207,30 +207,36 @@ export default function CameraStreamScreen() {
       // and we still mark connection ready so the audit/event lifecycle
       // can proceed for end-to-end flow testing.
       if (isTwilioVideoAvailable && twilioRef.current) {
-        // PUBLISHER PERMISSION GATE — the broadcasting side (enableVideo +
-        // enableAudio below) needs OS camera + microphone permission. On
-        // Android, calling Twilio.connect() with enableVideo/enableAudio while
-        // CAMERA or RECORD_AUDIO is ungranted makes connect() hang forever. The
-        // caregiver tablet — now the publisher in a recipient-initiated call —
-        // has never been through the care-recipient consent flow, so request
-        // here defensively. Already-granted permissions resolve instantly.
-        if (mode === "publish" && Platform.OS !== "web") {
+        // PERMISSION GATE — audio is now TWO-WAY, so BOTH sides capture the
+        // microphone (enableAudio:true below) and therefore both need OS
+        // RECORD_AUDIO. On Android, calling Twilio.connect() with enableAudio
+        // (or enableVideo) while the matching OS permission is ungranted makes
+        // connect() hang forever ("Joining room…"). So request mic on every
+        // device, and camera additionally on the publisher (the only side that
+        // sets enableVideo). Already-granted permissions resolve instantly, so
+        // this is a safe no-op for the recipient who already consented.
+        if (Platform.OS !== "web") {
           try {
             // eslint-disable-next-line @typescript-eslint/no-require-imports
             const { Camera } = require("expo-camera") as typeof import("expo-camera");
-            const camRes = await Camera.requestCameraPermissionsAsync();
             const micRes = await Camera.requestMicrophonePermissionsAsync();
+            const camRes =
+              mode === "publish"
+                ? await Camera.requestCameraPermissionsAsync()
+                : { status: "granted" as const };
             if (cancelled) return;
-            if (camRes.status !== "granted" || micRes.status !== "granted") {
+            if (micRes.status !== "granted" || camRes.status !== "granted") {
               if (user?.id) {
                 logAudit({
                   userId: user.id,
                   action: "camera_activation_failed",
-                  details: `Publisher permission denied — camera=${camRes.status}, microphone=${micRes.status} (room=${roomName})`,
+                  details: `Permission denied — camera=${camRes.status}, microphone=${micRes.status} (mode=${mode}, room=${roomName})`,
                 });
               }
               setTokenError(
-                "Camera and microphone access are needed to share your video. Enable them in Settings, then try again.",
+                mode === "publish"
+                  ? "Camera and microphone access are needed to share your video. Enable them in Settings, then try again."
+                  : "Microphone access is needed so you can speak during the call. Enable it in Settings, then try again.",
               );
               setTokenErrorDetail(`permissions: camera=${camRes.status}, mic=${micRes.status}`);
               setConnecting(false);
@@ -245,25 +251,24 @@ export default function CameraStreamScreen() {
               logAudit({
                 userId: user.id,
                 action: "camera_permission_warmup",
-                details: `Publisher permission request threw — ${reason} (room=${roomName})`,
+                details: `Permission request threw — ${reason} (mode=${mode}, room=${roomName})`,
               });
             }
           }
         }
         try {
-          // PHASE B — only the publisher (care-receiver) sends audio. The
-          // viewer (caregiver) receives audio implicitly from the remote
-          // participant; setting enableAudio: true on the view side would
-          // try to capture the caregiver's mic, which on Android requires
-          // RECORD_AUDIO at runtime — without it Twilio.connect() hangs
-          // forever and the screen stays stuck on "Joining room…". Two-way
-          // talk-back is a Phase C feature and will need a separate mic
-          // permission warm-up on the caregiver side.
+          // TWO-WAY AUDIO — both sides capture and publish their microphone so
+          // caregiver and care recipient can talk to each other. Only the
+          // publisher sends video (enableVideo); the viewer is audio-only on
+          // the outbound side but still hears the publisher's video+audio.
+          // enableRemoteAudio (Android) keeps inbound audio subscribed; iOS
+          // subscribes to remote audio automatically.
           twilioRef.current.connect({
             accessToken: result.token,
             roomName,
-            enableAudio: mode === "publish",
+            enableAudio: true,
             enableVideo: mode === "publish",
+            enableRemoteAudio: true,
             enableNetworkQualityReporting: true,
           });
           // Don't flip `connecting` to false yet — wait for onRoomDidConnect.
@@ -326,6 +331,15 @@ export default function CameraStreamScreen() {
     () => () => {
       setRoomConnected(true);
       setConnecting(false);
+      // AUDIO ROUTING — route call audio to the loudspeaker (not the quiet
+      // earpiece) and make sure inbound audio is unmuted, so both sides can
+      // hear each other hands-free. This is a no-op on web/Expo Go.
+      try {
+        twilioRef.current?.toggleSoundSetup(true);
+        twilioRef.current?.setRemoteAudioEnabled(true);
+      } catch {
+        /* ignore — audio routing is best-effort */
+      }
       if (user?.id) {
         logAudit({
           userId: user.id,
@@ -387,6 +401,21 @@ export default function CameraStreamScreen() {
       }
     },
     [user?.id, roomName, receiverId],
+  );
+
+  // REMOTE AUDIO — when the other participant's audio track arrives, make sure
+  // it is subscribed/unmuted and keep audio on the loudspeaker. Applies to BOTH
+  // sides now that audio is two-way. Best-effort; no-op on web/Expo Go.
+  const onParticipantAddedAudioTrack: TrackEventCb = useMemo(
+    () => () => {
+      try {
+        twilioRef.current?.setRemoteAudioEnabled(true);
+        twilioRef.current?.toggleSoundSetup(true);
+      } catch {
+        /* ignore — audio routing is best-effort */
+      }
+    },
+    [],
   );
 
   const onParticipantAddedVideoTrack: TrackEventCb = useMemo(
@@ -492,6 +521,7 @@ export default function CameraStreamScreen() {
             onRoomDidConnect={onRoomDidConnect}
             onRoomDidFailToConnect={onRoomDidFailToConnect}
             onRoomDidDisconnect={onRoomDidDisconnect}
+            onParticipantAddedAudioTrack={onParticipantAddedAudioTrack}
             onParticipantAddedVideoTrack={onParticipantAddedVideoTrack}
             onParticipantRemovedVideoTrack={onParticipantRemovedVideoTrack}
             onRoomParticipantDidDisconnect={onRoomParticipantDidDisconnect}
