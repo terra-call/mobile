@@ -21,6 +21,13 @@ import { ActivityIndicator, Image, StyleSheet, Text, View } from "react-native";
 import { getReolinkSnapshotSource } from "@/services/reolink";
 
 const POLL_MS = 1500;
+// The snapshot proxy logs in then grabs a frame (each step up to ~8s server
+// side), so a single probe can legitimately take several seconds — but it must
+// never hang forever. Abort a stalled probe and retry a couple of times before
+// falling back to the self-healing "offline" state.
+const PROBE_TIMEOUT_MS = 12000;
+const PROBE_RETRIES = 2;
+const PROBE_RETRY_DELAY_MS = 1500;
 
 type Phase = "loading" | "not_configured" | "ready";
 type Source = { uri: string; headers: Record<string, string> };
@@ -32,19 +39,47 @@ export function HomeCameraFeed({ targetUserId }: { targetUserId: string }) {
   const activeRef = useRef(true);
 
   // ── Initial probe — distinguish "not configured" (404) from "offline" ───────
+  // Bounded by a timeout + a few retries so a slow/stalled first frame can't
+  // leave the feed stuck on "Connecting…". If it can't get a definitive answer
+  // it drops into the "ready" (offline) state, where the live poll loop keeps
+  // retrying and self-heals the moment the camera responds again.
   useEffect(() => {
     activeRef.current = true;
-    (async () => {
-      const src = await getReolinkSnapshotSource(targetUserId);
-      if (!activeRef.current) return;
-      if (!src) {
-        setPhase("ready");
-        setLive(false);
-        return;
-      }
+    let cancelled = false;
+
+    const probe = async (attempt: number): Promise<void> => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
       try {
-        const res = await fetch(src.uri, { headers: src.headers });
-        if (!activeRef.current) return;
+        // Token acquisition can itself stall (network token refresh has no
+        // built-in timeout), so race it against the same abort deadline rather
+        // than awaiting it unguarded.
+        const src = await Promise.race([
+          getReolinkSnapshotSource(targetUserId),
+          new Promise<null>((resolve) => {
+            controller.signal.addEventListener("abort", () => resolve(null), {
+              once: true,
+            });
+          }),
+        ]);
+        if (cancelled || !activeRef.current) {
+          clearTimeout(timer);
+          return;
+        }
+        if (!src) {
+          clearTimeout(timer);
+          // Not signed in / server URL missing / token stalled — enter offline
+          // so the poll loop can recover, rather than spinning forever.
+          setPhase("ready");
+          setLive(false);
+          return;
+        }
+        const res = await fetch(src.uri, {
+          headers: src.headers,
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+        if (cancelled || !activeRef.current) return;
         if (res.status === 404) {
           setPhase("not_configured");
           return;
@@ -53,13 +88,23 @@ export function HomeCameraFeed({ targetUserId }: { targetUserId: string }) {
         setLive(res.ok);
         setPhase("ready");
       } catch {
-        if (activeRef.current) {
-          setPhase("ready");
-          setLive(false);
+        clearTimeout(timer);
+        if (cancelled || !activeRef.current) return;
+        if (attempt < PROBE_RETRIES) {
+          await new Promise((r) => setTimeout(r, PROBE_RETRY_DELAY_MS));
+          if (cancelled || !activeRef.current) return;
+          return probe(attempt + 1);
         }
+        // Give up the definitive probe — fall back to offline + keep polling.
+        setPhase("ready");
+        setLive(false);
       }
-    })();
+    };
+
+    void probe(0);
+
     return () => {
+      cancelled = true;
       activeRef.current = false;
     };
   }, [targetUserId]);

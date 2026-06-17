@@ -60,3 +60,15 @@ The integration logic is verifiable without a real camera via a localhost mock o
 `cmd=Login`/`cmd=Snap`, decoupling "is the code correct" from "can we reach the LAN".
 **Why:** user asked to "test snapshot against local camera first" — impossible from
 cloud; surfaced the blocker instead of shipping something that can't work.
+
+# Client probes MUST be timeout-bounded (intermittent "stuck on Connecting…")
+
+The snapshot proxy does login THEN snap, each up to ~8s server-side (~16s worst
+case), and the camera is often slow/flaky. So any client fetch against the proxy —
+**and the token acquisition that precedes it** — must be bounded by a timeout +
+retries, then fall back to the self-healing "offline" poll state. An unbounded
+probe fetch (or an unguarded `getIdToken()`) leaves the feed stuck on
+"Connecting to home camera…" forever — the reported intermittent-connect bug.
+**Why:** a `fetch(src.uri)` with no `AbortController` hung indefinitely when the
+proxy stalled; the live `<Image>` poll loop self-heals but only runs once phase
+leaves "loading", so the unbounded initial probe was the single trap.
