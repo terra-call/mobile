@@ -58,7 +58,10 @@ export type AuditAction =
   | "recipient_call_cancelled"
   // Reolink Home Camera
   | "reolink_camera_configured"
-  | "reolink_camera_removed";
+  | "reolink_camera_removed"
+  // Auto emergency home-camera surfacing (caregiver side)
+  | "emergency_camera_surfaced"
+  | "emergency_camera_dismissed";
 
 export interface LogAuditParams {
   userId: string;

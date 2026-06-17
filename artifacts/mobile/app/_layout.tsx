@@ -30,8 +30,13 @@ import {
   navigateToCallSubscribe,
   type IncomingCall,
 } from "@/components/IncomingCallModal";
+import {
+  EmergencyCameraModal,
+  type EmergencyAlert,
+  type EmergencyReason,
+} from "@/components/EmergencyCameraModal";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
-import { CareDataProvider } from "@/contexts/CareDataContext";
+import { CareDataProvider, useCareData } from "@/contexts/CareDataContext";
 import { STORAGE_KEYS } from "@/constants/storage";
 import { logAudit } from "@/services/audit";
 import { registerForPushNotifications } from "@/services/notifications";
@@ -56,6 +61,7 @@ function claimActivation(roomName: string): boolean {
 // the listener effects can re-run when the auth user loads.
 let recipientColdStartHandled = false;
 let caregiverColdStartHandled = false;
+let caregiverEmergencyColdStartHandled = false;
 
 // On a cold start the NavigationGuard performs its own initial router.replace
 // to land the user on their role dashboard. If we navigate to the camera
@@ -543,6 +549,182 @@ function IncomingCallListener() {
   );
 }
 
+// AUTO EMERGENCY CAMERA — caregiver-side listener
+// Surfaces the recipient's always-on Reolink home-camera feed automatically the
+// moment they enter an emergency / missed state, requiring NO action from the
+// recipient. Two delivery paths, mirroring the incoming-call pattern:
+//   1. FOREGROUND — react to status transitions on the live careReceivers list
+//      (Firestore onSnapshot). Only fires on a NEW transition into emergency /
+//      missed (seeded on first snapshot so a pre-existing emergency doesn't pop
+//      on every app open), and only when the recipient has a home camera.
+//   2. PUSH — the emergency / manual_emergency / missed pushes already carry the
+//      recipient's userId + name, so a backgrounded / killed caregiver app gets
+//      woken and surfaces the same modal. Deduped against the foreground path by
+//      the recipient currently being shown.
+function EmergencyCameraListener() {
+  const { user } = useAuth();
+  const { careReceivers } = useCareData();
+  const [alert, setAlert] = useState<EmergencyAlert | null>(null);
+  const userRef = useRef(user);
+  const prevStatusRef = useRef<Map<string, string>>(new Map());
+  const initializedRef = useRef(false);
+  // Recipient currently surfaced — dedupes the foreground + push paths so a
+  // single emergency can't open two overlapping modals.
+  const activeRecipientRef = useRef<string | null>(null);
+  // Latest loaded receivers, so the push handler can verify camera availability
+  // and caregiver linkage before surfacing the modal.
+  const receiversRef = useRef(careReceivers);
+
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
+
+  useEffect(() => {
+    receiversRef.current = careReceivers;
+  }, [careReceivers]);
+
+  // Reset all per-session state when the account changes (logout / switch).
+  useEffect(() => {
+    prevStatusRef.current = new Map();
+    initializedRef.current = false;
+    activeRecipientRef.current = null;
+    setAlert(null);
+  }, [user?.id]);
+
+  const open = useCallback((next: EmergencyAlert) => {
+    // Already showing this recipient — don't replace / re-trigger.
+    if (activeRecipientRef.current === next.recipientId) return;
+    activeRecipientRef.current = next.recipientId;
+    setAlert(next);
+    const u = userRef.current;
+    if (u) {
+      logAudit({
+        userId: u.id,
+        action: "emergency_camera_surfaced",
+        details: `Auto emergency home-camera surfaced for ${next.recipientName} (reason=${next.reason})`,
+        targetUserId: next.recipientId,
+      }).catch(() => {});
+    }
+  }, []);
+
+  const handleDismiss = useCallback(() => {
+    const u = userRef.current;
+    setAlert((cur) => {
+      if (u && cur) {
+        logAudit({
+          userId: u.id,
+          action: "emergency_camera_dismissed",
+          details: `Caregiver dismissed auto emergency home-camera for ${cur.recipientName} (reason=${cur.reason})`,
+          targetUserId: cur.recipientId,
+        }).catch(() => {});
+      }
+      return null;
+    });
+    activeRecipientRef.current = null;
+  }, []);
+
+  // ── FOREGROUND PATH — status transitions on the live recipient list ─────────
+  useEffect(() => {
+    if (!user || user.role !== "caregiver") return;
+    const prev = prevStatusRef.current;
+
+    // Seed on the first snapshot so a recipient already IN emergency when the
+    // caregiver opens the app doesn't auto-pop a (possibly stale) modal — the
+    // dashboard already shows it, and the push path covers the app-was-closed
+    // case. Only later transitions surface the modal.
+    if (!initializedRef.current) {
+      for (const r of careReceivers) prev.set(r.id, r.status);
+      initializedRef.current = true;
+      return;
+    }
+
+    for (const r of careReceivers) {
+      const before = prev.get(r.id);
+      prev.set(r.id, r.status);
+      if (before === r.status) continue;
+      const becameEmergency = r.status === "emergency" && before !== "emergency";
+      // Don't surface for a de-escalation (emergency → missed).
+      const becameMissed =
+        r.status === "missed" && before !== "missed" && before !== "emergency";
+      // Scope to THIS caregiver's linked recipients with a home camera. The
+      // caregiver list itself is currently unfiltered (demo), so without this
+      // gate the modal could surface for unrelated recipients.
+      const linked = r.permittedCaregiverIds.includes(user.id);
+      if ((becameEmergency || becameMissed) && r.hasHomeCamera && linked) {
+        open({
+          recipientId: r.id,
+          recipientName: r.name,
+          reason: r.status === "emergency" ? "emergency" : "missed",
+        });
+      }
+    }
+  }, [careReceivers, user, open]);
+
+  // ── PUSH PATH — wakes a backgrounded / killed caregiver app ─────────────────
+  const handlePush = useCallback(
+    (notification: Notifications.Notification) => {
+      const u = userRef.current;
+      if (!u || u.role !== "caregiver") return;
+      const data = notification.request?.content?.data as
+        | { type?: string; userId?: string; receiverName?: string }
+        | undefined;
+      const type = data?.type;
+      if (
+        type !== "emergency" &&
+        type !== "manual_emergency" &&
+        type !== "missed"
+      ) {
+        return;
+      }
+      if (!data?.userId) return;
+      // If care data is already loaded, verify this recipient is linked to this
+      // caregiver AND has a home camera before surfacing — don't pop a feed for
+      // an unrelated recipient or one with no camera. On a cold start the list
+      // may not be loaded yet; in that case fall back to best-effort (the push
+      // was targeted to this caregiver, which already implies linkage).
+      const r = receiversRef.current.find((x) => x.id === data.userId);
+      if (r && (!r.hasHomeCamera || !r.permittedCaregiverIds.includes(u.id))) {
+        return;
+      }
+      open({
+        recipientId: data.userId,
+        recipientName: data.receiverName ?? "Care recipient",
+        reason: type as EmergencyReason,
+      });
+    },
+    [open],
+  );
+
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+    if (!user || user.role !== "caregiver") return;
+
+    const recvSub = Notifications.addNotificationReceivedListener(handlePush);
+    const respSub = Notifications.addNotificationResponseReceivedListener((r) =>
+      handlePush(r.notification),
+    );
+
+    // COLD START — launched by tapping the push from a killed state. The
+    // response listener does NOT fire for the launching notification, so
+    // consult the last response once per process.
+    if (!caregiverEmergencyColdStartHandled) {
+      caregiverEmergencyColdStartHandled = true;
+      Notifications.getLastNotificationResponseAsync()
+        .then((response) => {
+          if (response) handlePush(response.notification);
+        })
+        .catch(() => {});
+    }
+
+    return () => {
+      recvSub.remove();
+      respSub.remove();
+    };
+  }, [user?.id, user?.role, handlePush]);
+
+  return <EmergencyCameraModal alert={alert} onDismiss={handleDismiss} />;
+}
+
 function NavigationGuard() {
   const { user, loading } = useAuth();
   const segments = useSegments();
@@ -609,6 +791,7 @@ function RootLayoutNav() {
       <CameraActivationListener />
       <CameraActivationFirestoreListener />
       <IncomingCallListener />
+      <EmergencyCameraListener />
       <Stack
         screenOptions={{
           headerShown: false,

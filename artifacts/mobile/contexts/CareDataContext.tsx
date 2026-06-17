@@ -55,6 +55,15 @@ export interface CareReceiver {
   // "· X min ago" label on the status card while in EMERGENCY (so it reflects
   // the alert time, not the stale last check-in time).
   lastEmergencyAt: string | null;
+  // Whether this recipient has connected a Reolink home camera. Gates the
+  // auto-surfacing emergency camera feed — no point popping the feed modal for
+  // a recipient who never configured one.
+  hasHomeCamera: boolean;
+  // Caregiver uids this recipient has linked (from the recipient's
+  // `permittedCaregivers` array). Used to scope the auto-emergency camera so it
+  // only surfaces for a caregiver's OWN recipients — the same linkage the
+  // server enforces server-side (isPermittedForReceiver).
+  permittedCaregiverIds: string[];
 }
 
 interface CareDataContextValue {
@@ -88,6 +97,8 @@ const DEMO_RECEIVERS: CareReceiver[] = [
     escalationWindowMin: DEFAULT_ESCALATION_MIN,
     recentAlerts: [],
     lastEmergencyAt: null,
+    hasHomeCamera: false,
+    permittedCaregiverIds: [],
   },
   {
     id: "demo2",
@@ -101,6 +112,8 @@ const DEMO_RECEIVERS: CareReceiver[] = [
     escalationWindowMin: DEFAULT_ESCALATION_MIN,
     recentAlerts: [],
     lastEmergencyAt: null,
+    hasHomeCamera: false,
+    permittedCaregiverIds: [],
   },
   {
     id: "demo3",
@@ -114,6 +127,8 @@ const DEMO_RECEIVERS: CareReceiver[] = [
     escalationWindowMin: DEFAULT_ESCALATION_MIN,
     recentAlerts: [],
     lastEmergencyAt: null,
+    hasHomeCamera: false,
+    permittedCaregiverIds: [],
   },
 ];
 
@@ -235,6 +250,12 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
               escalationWindowMin: escalation,
               recentAlerts,
               lastEmergencyAt,
+              hasHomeCamera: !!(data.reolink && data.reolink.host),
+              permittedCaregiverIds: Array.isArray(data.permittedCaregivers)
+                ? (data.permittedCaregivers as Array<{ id?: string }>)
+                    .map((c) => c?.id)
+                    .filter((id): id is string => typeof id === "string")
+                : [],
             };
           });
           setCareReceivers(liveReceivers);
