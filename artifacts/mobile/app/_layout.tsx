@@ -642,19 +642,20 @@ function EmergencyCameraListener() {
       const before = prev.get(r.id);
       prev.set(r.id, r.status);
       if (before === r.status) continue;
+      // Auto-surface ONLY for genuine emergencies — a manual "I'M NOT OK" or a
+      // no-response escalation, both of which land the recipient in "emergency".
+      // A missed check-in is a high-priority notification only; the caregiver
+      // taps it to open the feed manually, so it must NOT auto-open here.
       const becameEmergency = r.status === "emergency" && before !== "emergency";
-      // Don't surface for a de-escalation (emergency → missed).
-      const becameMissed =
-        r.status === "missed" && before !== "missed" && before !== "emergency";
       // Scope to THIS caregiver's linked recipients with a home camera. The
       // caregiver list itself is currently unfiltered (demo), so without this
       // gate the modal could surface for unrelated recipients.
       const linked = r.permittedCaregiverIds.includes(user.id);
-      if ((becameEmergency || becameMissed) && r.hasHomeCamera && linked) {
+      if (becameEmergency && r.hasHomeCamera && linked) {
         open({
           recipientId: r.id,
           recipientName: r.name,
-          reason: r.status === "emergency" ? "emergency" : "missed",
+          reason: "emergency",
         });
       }
     }
@@ -662,7 +663,7 @@ function EmergencyCameraListener() {
 
   // ── PUSH PATH — wakes a backgrounded / killed caregiver app ─────────────────
   const handlePush = useCallback(
-    (notification: Notifications.Notification) => {
+    (notification: Notifications.Notification, userInitiated: boolean) => {
       const u = userRef.current;
       if (!u || u.role !== "caregiver") return;
       const data = notification.request?.content?.data as
@@ -676,6 +677,10 @@ function EmergencyCameraListener() {
       ) {
         return;
       }
+      // A missed check-in never auto-opens the feed — it only surfaces if the
+      // caregiver actively taps the notification (userInitiated). Genuine
+      // emergencies (manual "I'M NOT OK" / no-response escalation) auto-open.
+      if (type === "missed" && !userInitiated) return;
       if (!data?.userId) return;
       // If care data is already loaded, verify this recipient is linked to this
       // caregiver AND has a home camera before surfacing — don't pop a feed for
@@ -699,19 +704,22 @@ function EmergencyCameraListener() {
     if (Platform.OS === "web") return;
     if (!user || user.role !== "caregiver") return;
 
-    const recvSub = Notifications.addNotificationReceivedListener(handlePush);
+    const recvSub = Notifications.addNotificationReceivedListener((n) =>
+      handlePush(n, false),
+    );
     const respSub = Notifications.addNotificationResponseReceivedListener((r) =>
-      handlePush(r.notification),
+      handlePush(r.notification, true),
     );
 
     // COLD START — launched by tapping the push from a killed state. The
     // response listener does NOT fire for the launching notification, so
-    // consult the last response once per process.
+    // consult the last response once per process. This is a tap, so it counts
+    // as user-initiated (a missed-check-in tap opens the feed).
     if (!caregiverEmergencyColdStartHandled) {
       caregiverEmergencyColdStartHandled = true;
       Notifications.getLastNotificationResponseAsync()
         .then((response) => {
-          if (response) handlePush(response.notification);
+          if (response) handlePush(response.notification, true);
         })
         .catch(() => {});
     }
