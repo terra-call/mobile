@@ -602,7 +602,13 @@ export default function CameraStreamScreen() {
           <View style={styles.feedLabel} pointerEvents="none">
             <Text style={styles.feedLabelText}>HOME CAMERA</Text>
           </View>
-          <HomeCameraFeed targetUserId={receiverId} />
+          {/* Secondary home-camera view during a call. Continuous polling only
+              for emergency rooms; otherwise it's a manual on-demand frame so a
+              routine call doesn't run the ~1.5s loop in the background. */}
+          <HomeCameraFeed
+            targetUserId={receiverId}
+            active={roomName.startsWith("tc-emrg")}
+          />
         </View>
       )}
       </View>

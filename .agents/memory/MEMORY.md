@@ -1,5 +1,6 @@
 - [Push notifications](push-notifications.md) — wakeups needed for both call directions (Firestore listeners pause in bg); Android APK needs FCM creds on EAS; PHI-safe push bodies.
 - [EAS Update / OTA](eas-update-and-builds.md) — run `eas update` via a temp workflow (not bash bg); use `--branch` + `CI=1`; tablet is `preview` channel, runtime 1.0.0 appVersion.
+- [Async poll-loop cancellation](async-poll-loop-cancellation.md) — async self-rescheduling setTimeout loops need an effect-local `cancelled` flag; `clearTimeout` + mount-flag alone don't stop them.
 - [Caregiver data scoping](caregiver-data-scoping.md) — caregiver care-receiver list is unfiltered client-side; any new caregiver PHI surface must self-gate on `permittedCaregiverIds`.
 - [pnpm overrides](pnpm-overrides.md) — patch vulnerable transitive deps via overrides; caret jumps past parent's range so pin exact when parent uses `~x.y`; re-grep lockfile after install.
 - [Caregiver alert history](caregiver-alert-history.md) — per-press alerts live on recipient user doc (events is admin-only); atomic append via runTransaction; emergency time uses lastEmergencyAt.

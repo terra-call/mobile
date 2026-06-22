@@ -144,9 +144,17 @@ export function EmergencyCameraModal({
             <Text style={styles.detail}>{copy.detail}</Text>
           </View>
 
-          {/* Live home-camera feed */}
+          {/* Live home-camera feed — continuous polling only for genuine
+              emergencies/escalations. A missed check-in shows a single frame
+              with a manual Refresh (no ~1.5s loop) to keep bandwidth down. */}
           <View style={styles.feedWrap}>
-            <HomeCameraFeed targetUserId={alert.recipientId} />
+            <HomeCameraFeed
+              targetUserId={alert.recipientId}
+              active={
+                alert.reason === "emergency" ||
+                alert.reason === "manual_emergency"
+              }
+            />
             <View style={styles.liveTag}>
               <View style={styles.liveDot} />
               <Text style={styles.liveText}>HOME CAMERA</Text>

@@ -59,6 +59,9 @@ export type AuditAction =
   // Reolink Home Camera
   | "reolink_camera_configured"
   | "reolink_camera_removed"
+  // Reolink live-feed polling session lifecycle (bandwidth/cost monitoring)
+  | "reolink_polling_started"
+  | "reolink_polling_stopped"
   // Auto emergency home-camera surfacing (caregiver side)
   | "emergency_camera_surfaced"
   | "emergency_camera_dismissed";

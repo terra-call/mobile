@@ -31,8 +31,21 @@ import {
   isCryptoConfigured,
 } from "../lib/reolinkCrypto";
 import { fetchSnapshot, isAllowedCameraHost } from "../lib/reolinkClient";
+import { createFixedWindowLimiter } from "../lib/rateLimit";
 
 const router: IRouter = Router();
+
+// Per-recipient snapshot rate limit. A legit caregiver feed polls ~1 frame /
+// 1.5s (~40/min) per viewer; we cap each recipient well above a single viewer
+// (room for a couple of concurrent caregivers + retries) but low enough that a
+// runaway client loop can't keep logging into the camera and pulling frames.
+// Over the limit → 429; the client backs off and self-heals next window.
+const SNAPSHOT_WINDOW_MS = 60_000;
+const SNAPSHOT_MAX_PER_WINDOW = 100;
+const snapshotLimiter = createFixedWindowLimiter({
+  windowMs: SNAPSHOT_WINDOW_MS,
+  max: SNAPSHOT_MAX_PER_WINDOW,
+});
 
 /** Strip scheme/whitespace/trailing slash from a user-entered host. */
 function sanitizeHost(raw: unknown): string | null {
@@ -153,6 +166,26 @@ router.get(
         "Reolink snapshot rejected — caller not permitted for receiver",
       );
       return res.status(403).json({ error: "forbidden" });
+    }
+
+    // Rate-limit per recipient (only permitted callers count, so an unrelated
+    // caller can't grief a recipient's window). Stops a runaway client loop
+    // from repeatedly logging into the camera and pulling frames.
+    const limit = snapshotLimiter(`snapshot:${targetUserId}`);
+    if (!limit.allowed) {
+      logger.warn(
+        {
+          callerUid: auth.uid,
+          targetUserId,
+          retryAfterSec: limit.retryAfterSec,
+          route: "/reolink/snapshot",
+        },
+        "Reolink snapshot rate-limited (per-recipient cap exceeded)",
+      );
+      res.setHeader("Retry-After", String(limit.retryAfterSec));
+      return res
+        .status(429)
+        .json({ error: "rate_limited", retryAfterSec: limit.retryAfterSec });
     }
 
     const doc = await fetchUserDocAsCaller(auth.idToken, targetUserId);
