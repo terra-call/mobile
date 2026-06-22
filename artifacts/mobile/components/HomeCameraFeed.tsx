@@ -16,11 +16,21 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { Feather } from "@expo/vector-icons";
-import React, { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Image, StyleSheet, Text, View } from "react-native";
+import React, { useCallback, useEffect, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  Animated,
+  Image,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { getReolinkSnapshotSource } from "@/services/reolink";
 
 const POLL_MS = 1500;
+// Cross-fade duration when swapping to a freshly-loaded frame. Short enough to
+// feel live, long enough to hide the hard cut between JPEGs.
+const FADE_MS = 280;
 // The snapshot proxy logs in then grabs a frame (each step up to ~8s server
 // side), so a single probe can legitimately take several seconds — but it must
 // never hang forever. Abort a stalled probe and retry a couple of times before
@@ -34,9 +44,65 @@ type Source = { uri: string; headers: Record<string, string> };
 
 export function HomeCameraFeed({ targetUserId }: { targetUserId: string }) {
   const [phase, setPhase] = useState<Phase>("loading");
-  const [source, setSource] = useState<Source | null>(null);
   const [live, setLive] = useState(false);
   const activeRef = useRef(true);
+
+  // ── Double-buffered frame swap (no flicker) ─────────────────────────────────
+  // Two persistent <Image> layers ping-pong: a new frame is loaded into the
+  // hidden layer and only cross-faded in once it has fully decoded (onLoad), so
+  // the previous frame stays on screen until the new one is ready. Both layers
+  // stay mounted to preserve their decoded bitmaps across swaps.
+  const [layerA, setLayerA] = useState<Source | null>(null);
+  const [layerB, setLayerB] = useState<Source | null>(null);
+  const visibleRef = useRef<"A" | "B">("A");
+  const opacityA = useRef(new Animated.Value(1)).current;
+  const opacityB = useRef(new Animated.Value(0)).current;
+  // Consecutive image-load failures — we only show the offline overlay after a
+  // couple in a row so a single dropped hidden-layer frame can't flash it over
+  // a perfectly good visible frame.
+  const failCountRef = useRef(0);
+
+  // Load the next frame into whichever layer is currently hidden.
+  const loadIntoHidden = useCallback((src: Source) => {
+    if (visibleRef.current === "A") setLayerB(src);
+    else setLayerA(src);
+  }, []);
+
+  // Cross-fade to a layer once its image has finished loading.
+  const onLayerLoaded = useCallback(
+    (layer: "A" | "B") => {
+      if (!activeRef.current) return;
+      failCountRef.current = 0;
+      setLive(true);
+      if (layer === visibleRef.current) return; // initial / already-visible frame
+      // Claim visibility immediately (at fade start, not on completion) so the
+      // next frame always loads into the truly-hidden layer even if this fade is
+      // still mid-flight — preserving the ping-pong invariant under timing churn.
+      visibleRef.current = layer;
+      const incoming = layer === "A" ? opacityA : opacityB;
+      const outgoing = layer === "A" ? opacityB : opacityA;
+      Animated.parallel([
+        Animated.timing(incoming, {
+          toValue: 1,
+          duration: FADE_MS,
+          useNativeDriver: true,
+        }),
+        Animated.timing(outgoing, {
+          toValue: 0,
+          duration: FADE_MS,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    },
+    [opacityA, opacityB],
+  );
+
+  // A frame failed to load — only fall to "offline" after repeated failures.
+  const onLayerError = useCallback(() => {
+    if (!activeRef.current) return;
+    failCountRef.current += 1;
+    if (failCountRef.current >= 2) setLive(false);
+  }, []);
 
   // ── Initial probe — distinguish "not configured" (404) from "offline" ───────
   // Bounded by a timeout + a few retries so a slow/stalled first frame can't
@@ -84,8 +150,9 @@ export function HomeCameraFeed({ targetUserId }: { targetUserId: string }) {
           setPhase("not_configured");
           return;
         }
-        setSource(src);
-        setLive(res.ok);
+        // Feed the first frame through the double-buffer; the Image's onLoad
+        // drives `live`, so a stale/failed frame won't be marked live.
+        loadIntoHidden(src);
         setPhase("ready");
       } catch {
         clearTimeout(timer);
@@ -116,7 +183,7 @@ export function HomeCameraFeed({ targetUserId }: { targetUserId: string }) {
     const tick = async () => {
       const src = await getReolinkSnapshotSource(targetUserId);
       if (!activeRef.current) return;
-      if (src) setSource(src);
+      if (src) loadIntoHidden(src);
       timer = setTimeout(tick, POLL_MS);
     };
     timer = setTimeout(tick, POLL_MS);
@@ -146,13 +213,22 @@ export function HomeCameraFeed({ targetUserId }: { targetUserId: string }) {
 
   return (
     <View style={styles.fill}>
-      {source && (
-        <Image
-          source={source}
-          style={styles.fill}
+      {layerA && (
+        <Animated.Image
+          source={layerA}
+          style={[StyleSheet.absoluteFillObject, { opacity: opacityA }]}
           resizeMode="cover"
-          onLoad={() => activeRef.current && setLive(true)}
-          onError={() => activeRef.current && setLive(false)}
+          onLoad={() => onLayerLoaded("A")}
+          onError={onLayerError}
+        />
+      )}
+      {layerB && (
+        <Animated.Image
+          source={layerB}
+          style={[StyleSheet.absoluteFillObject, { opacity: opacityB }]}
+          resizeMode="cover"
+          onLoad={() => onLayerLoaded("B")}
+          onError={onLayerError}
         />
       )}
       {!live && (

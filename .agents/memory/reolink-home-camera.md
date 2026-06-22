@@ -72,3 +72,23 @@ probe fetch (or an unguarded `getIdToken()`) leaves the feed stuck on
 **Why:** a `fetch(src.uri)` with no `AbortController` hung indefinitely when the
 proxy stalled; the live `<Image>` poll loop self-heals but only runs once phase
 leaves "loading", so the unbounded initial probe was the single trap.
+
+# Flicker-free pseudo-live feed = double-buffer cross-fade, not source-swap
+
+Swapping one `<Image>`'s `source` every poll makes it blank-then-redraw, so the
+~1.5s feed visibly blinks. Fix = two persistent `Animated.Image` layers that
+ping-pong: load each new frame into the currently-hidden layer, and only on its
+`onLoad` cross-fade it in (opacity 0→1) while the old one fades out (1→0). Keep
+both layers mounted so decoded bitmaps survive swaps; `useNativeDriver:true` for
+opacity is fine.
+
+Two non-obvious correctness rules (architect flagged both):
+1. **Claim visibility at fade *start*, not on the animation's `finished` callback.**
+   If `visibleRef` only flips when the fade completes, a frame that arrives
+   mid-fade gets loaded into the still-transitioning layer and breaks the
+   ping-pong invariant. Set `visibleRef.current = layer` the moment you kick off
+   the fade so the next `loadIntoHidden` always targets the truly-hidden side.
+2. **Gate the "offline" overlay on consecutive load failures, not any single
+   `onError`.** A hidden-layer frame can drop while a good frame is still on
+   screen; one failure flipping `live=false` flashes the offline card over a
+   valid image. Count failures, reset on any `onLoad`, only go offline after ≥2.
