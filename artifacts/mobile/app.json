@@ -103,7 +103,7 @@
     },
     "owner": "terracall",
     "runtimeVersion": {
-      "policy": "appVersion"
+      "policy": "fingerprint"
     },
     "updates": {
       "url": "https://u.expo.dev/715d9c4f-6a1b-407b-8b3a-e2a43d458682"
