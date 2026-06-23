@@ -5,15 +5,3 @@ id = "cAmCPBNAPbaknXgl7xXtY"
 uri = "file://artifacts/mobile/assets/images/icon.png"
 type = "image"
 title = "generated_image"
-
-[[outputs]]
-id = "U9n7RIL7dGdpx-p1_AqGc"
-uri = "file://artifacts/api-server/public/legal/sms-consent-unchecked.jpg"
-type = "image"
-title = "SMS consent checkbox — unchecked by default"
-
-[[outputs]]
-id = "7PWv9UzWMalwyTCTf7nra"
-uri = "file://artifacts/api-server/public/legal/sms-consent-checked.jpg"
-type = "image"
-title = "SMS consent checkbox — checked to opt in"
