@@ -1,5 +1,6 @@
 - [Push notifications](push-notifications.md) — wakeups needed for both call directions (Firestore listeners pause in bg); Android APK needs FCM creds on EAS; PHI-safe push bodies.
 - [EAS Update / OTA](eas-update-and-builds.md) — run `eas update` via a temp workflow (not bash bg); use `--branch` + `CI=1`; tablet is `preview` channel, runtime 1.0.0 appVersion.
+- [Reolink pseudo-live feed](reolink-pseudo-live-feed.md) — "live" home cam is serial JPEG snapshot polling; loop must be self-paced w/ frameId identity; server fast-fails on timeout; port-forward is intermittent.
 - [Twilio Video reconnect + Reolink contention](twilio-video-reconnect.md) — viewer-side remote hangup = onRoomParticipantDidDisconnect (not onRoomDidDisconnect); connect() returns before rejoin outcome so chain retries via onRoomDidFailToConnect; gentle home-cam poll avoids WebRTC starvation.
 - [Async poll-loop cancellation](async-poll-loop-cancellation.md) — async self-rescheduling setTimeout loops need an effect-local `cancelled` flag; `clearTimeout` + mount-flag alone don't stop them.
 - [EAS runtime policy + native placeholders](eas-runtime-policy-and-native-placeholders.md) — appVersion policy lets OTA JS drift onto a mismatched native binary; camera-stream "Run an EAS dev build" placeholder == SDK require() failed, not a creds/room issue; Video needs API Key secrets.

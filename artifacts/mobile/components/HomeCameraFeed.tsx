@@ -41,20 +41,30 @@ import { getReolinkSnapshotSource } from "@/services/reolink";
 import { useAuth } from "@/contexts/AuthContext";
 import { logAudit } from "@/services/audit";
 
-// Poll cadence for the pseudo-live feed. Kept deliberately gentle (rather than a
-// true ~1.5s "video" rate) so the full-frame JPEG downloads don't saturate the
-// device's bandwidth while a Twilio WebRTC call runs on the SAME screen — that
-// contention was starving and dropping the phone-camera feed ~30s into a call.
+// Target interval between frame *starts* for the pseudo-live feed. Kept
+// deliberately gentle (rather than a true ~1.5s "video" rate) so the full-frame
+// JPEG downloads don't saturate the device's bandwidth while a Twilio WebRTC
+// call runs on the SAME screen — that contention was starving and dropping the
+// phone-camera feed. NOTE: the loop is self-paced (see the poll effect) — it
+// only starts the next frame once the current one resolves, so frames never
+// overlap. POLL_MS is the *minimum* spacing measured from each frame's start.
 const POLL_MS = 2500;
+// Floor between frames. After a slow or failed frame (which already ate most of
+// POLL_MS) we retry promptly rather than adding another full interval on top.
+const MIN_GAP_MS = 500;
+// Watchdog for a single in-flight frame: if the <Image> neither loads nor errors
+// within this window (stuck socket / dropped connection), give up on it and pace
+// the next frame anyway so the loop can't stall on one hung request.
+const FRAME_TIMEOUT_MS = 9000;
 // Cross-fade duration when swapping to a freshly-loaded frame. Short enough to
 // feel live, long enough to hide the hard cut between JPEGs.
 const FADE_MS = 280;
-// The snapshot proxy logs in then grabs a frame (each step up to ~8s server
-// side), so a single probe can legitimately take several seconds — but it must
-// never hang forever. Abort a stalled probe and retry a couple of times before
-// falling back to the self-healing "offline" state.
-const PROBE_TIMEOUT_MS = 12000;
-const PROBE_RETRIES = 2;
+// The snapshot proxy logs in then grabs a frame (server-side fast-fails at ~6s),
+// so a single probe can legitimately take a few seconds — but it must never hang
+// forever. Abort a stalled probe and retry once before falling back to the
+// self-healing "offline" state, where the live poll loop keeps retrying.
+const PROBE_TIMEOUT_MS = 8000;
+const PROBE_RETRIES = 1;
 const PROBE_RETRY_DELAY_MS = 1500;
 // Maximum continuous polling session before we pause and require a manual
 // Resume — caps the cost of a feed left open and forgotten.
@@ -102,10 +112,24 @@ export function HomeCameraFeed({
   // couple in a row so a single dropped hidden-layer frame can't flash it over
   // a perfectly good visible frame.
   const failCountRef = useRef(0);
+  // Set by the live poll effect to its `advance(frameId)` fn so the image
+  // load/error callbacks can pace the NEXT frame the moment the current one
+  // resolves (self-pacing — see the poll effect). Null when the loop isn't
+  // running. The frameId argument lets `advance` ignore a late callback from an
+  // already-superseded frame, so a stale settle can't shorten the current
+  // frame's interval or cancel its watchdog.
+  const scheduleNextRef = useRef<((frameId: number) => void) | null>(null);
+  // The monotonic frameId currently loading in each physical layer, so a
+  // layer's load/error callback can tell `advance` WHICH frame just settled.
+  const layerFrameIdRef = useRef<{ A: number; B: number }>({ A: 0, B: 0 });
 
-  // Load the next frame into whichever layer is currently hidden.
-  const loadIntoHidden = useCallback((src: Source) => {
-    if (visibleRef.current === "A") setLayerB(src);
+  // Load the next frame into whichever layer is currently hidden. `frameId` (set
+  // by the poll loop) is recorded against the target layer for self-pacing; the
+  // probe/manual paths omit it (they don't drive the loop).
+  const loadIntoHidden = useCallback((src: Source, frameId?: number) => {
+    const target: "A" | "B" = visibleRef.current === "A" ? "B" : "A";
+    if (frameId !== undefined) layerFrameIdRef.current[target] = frameId;
+    if (target === "B") setLayerB(src);
     else setLayerA(src);
   }, []);
 
@@ -113,6 +137,8 @@ export function HomeCameraFeed({
   const onLayerLoaded = useCallback(
     (layer: "A" | "B") => {
       if (!activeRef.current) return;
+      // This frame settled — pace the next one (no-op outside the poll loop).
+      scheduleNextRef.current?.(layerFrameIdRef.current[layer]);
       failCountRef.current = 0;
       setLive(true);
       if (layer === visibleRef.current) return; // initial / already-visible frame
@@ -139,8 +165,11 @@ export function HomeCameraFeed({
   );
 
   // A frame failed to load — only fall to "offline" after repeated failures.
-  const onLayerError = useCallback(() => {
+  const onLayerError = useCallback((layer: "A" | "B") => {
     if (!activeRef.current) return;
+    // This frame settled (with a failure) — pace the next one so a transient
+    // error self-heals quickly instead of stalling the loop.
+    scheduleNextRef.current?.(layerFrameIdRef.current[layer]);
     failCountRef.current += 1;
     if (failCountRef.current >= 2) setLive(false);
   }, []);
@@ -240,26 +269,76 @@ export function HomeCameraFeed({
     phase === "ready" && active && appForeground && pausedReason === null;
 
   // ── Live refresh loop — runs only while `polling` ───────────────────────────
-  // `tick` is async: `polling` can flip false (background / 10-min cap / emergency
-  // ended / unmount) while a fetch is in flight. An effect-local `cancelled`
-  // flag is the only reliable stop signal — clearing `timer` alone misses the
-  // case where the timeout already fired and we're mid-await, which would
-  // otherwise reschedule a fresh loop after cleanup ran and keep costing money.
+  // Self-paced: each frame requests the next only once it settles (load, error,
+  // or watchdog timeout), so frames never overlap. `tick` is async and `polling`
+  // can flip false (background / 10-min cap / emergency ended / unmount) while a
+  // fetch is in flight, so an effect-local `cancelled` flag is the only reliable
+  // stop signal — clearing the timers alone misses the case where one already
+  // fired and we're mid-await, which would otherwise reschedule a fresh loop
+  // after cleanup ran and keep costing money.
   useEffect(() => {
     if (!polling) return;
     let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const tick = async () => {
-      const src = await getReolinkSnapshotSource(targetUserId);
-      if (cancelled || !activeRef.current) return;
-      if (src) loadIntoHidden(src);
-      if (cancelled) return;
-      timer = setTimeout(tick, POLL_MS);
+    let frameTimer: ReturnType<typeof setTimeout> | undefined; // per-frame watchdog
+    let gapTimer: ReturnType<typeof setTimeout> | undefined; // inter-frame delay
+    let frameId = 0; // monotonic id of the in-flight frame
+    let settled = false; // has the current frame resolved (load/error/timeout)?
+    let frameStartedAt = 0;
+
+    // Pace the NEXT frame. Acts at most once per frame — driven by the image
+    // load/error callbacks (via scheduleNextRef) or the watchdog below. The
+    // `forId` guard ignores a late settle from a superseded frame so it can't
+    // shorten the current frame's interval or clear its watchdog.
+    // Self-pacing is the core fix: the old fixed-interval loop fired a new frame
+    // every POLL_MS regardless of whether the previous one had returned, so on a
+    // slow camera path requests piled up and each new one aborted the previous
+    // in-flight fetch — leaving the feed stuck "reconnecting". Now frames never
+    // overlap: we only request the next once the current settles.
+    const advance = (forId: number) => {
+      if (cancelled || forId !== frameId || settled) return;
+      settled = true;
+      if (frameTimer) clearTimeout(frameTimer);
+      // Aim for POLL_MS between frame starts, but never wait less than MIN_GAP_MS
+      // so a slow/failed frame (which already consumed most of POLL_MS) retries
+      // promptly instead of adding another full interval.
+      const elapsed = Date.now() - frameStartedAt;
+      const gap = Math.max(MIN_GAP_MS, POLL_MS - elapsed);
+      gapTimer = setTimeout(tick, gap);
     };
-    timer = setTimeout(tick, POLL_MS);
+
+    const tick = async () => {
+      if (cancelled) return;
+      const myId = ++frameId;
+      settled = false;
+      frameStartedAt = Date.now();
+      // One watchdog for the WHOLE frame, armed BEFORE the token-mint await so a
+      // hang in getReolinkSnapshotSource() (e.g. a stalled getIdToken) can't
+      // freeze the loop — it also covers the subsequent <Image> load. If it fires
+      // (forId still current), advance paces the next frame so we can't stall.
+      frameTimer = setTimeout(() => advance(myId), FRAME_TIMEOUT_MS);
+      const src = await getReolinkSnapshotSource(targetUserId);
+      // `settled` here means the watchdog already fired during the mint — bail so
+      // we don't stomp the next frame's source or arm a duplicate timer.
+      if (cancelled || !activeRef.current || settled) return;
+      if (!src) {
+        advance(myId); // couldn't mint a token — retry after a gap
+        return;
+      }
+      // Same-layer reuse on a failed frame is safe: setLayer*(src) swaps the
+      // <Image> source, which aborts any still-in-flight load on that layer, so a
+      // superseded frame can't fire a late onLoad/onError. The frameId gate in
+      // advance() guards the residual timing windows.
+      loadIntoHidden(src, myId);
+    };
+
+    scheduleNextRef.current = advance;
+    void tick(); // first frame immediately — don't wait a whole interval
+
     return () => {
       cancelled = true;
-      if (timer) clearTimeout(timer);
+      scheduleNextRef.current = null;
+      if (frameTimer) clearTimeout(frameTimer);
+      if (gapTimer) clearTimeout(gapTimer);
     };
   }, [polling, targetUserId, loadIntoHidden]);
 
@@ -363,7 +442,7 @@ export function HomeCameraFeed({
           style={[StyleSheet.absoluteFillObject, { opacity: opacityA }]}
           resizeMode="cover"
           onLoad={() => onLayerLoaded("A")}
-          onError={onLayerError}
+          onError={() => onLayerError("A")}
         />
       )}
       {layerB && (
@@ -372,7 +451,7 @@ export function HomeCameraFeed({
           style={[StyleSheet.absoluteFillObject, { opacity: opacityB }]}
           resizeMode="cover"
           onLoad={() => onLayerLoaded("B")}
-          onError={onLayerError}
+          onError={() => onLayerError("B")}
         />
       )}
 

@@ -45,7 +45,10 @@ interface TokenEntry {
 }
 
 const tokenCache = new Map<string, TokenEntry>();
-const REQUEST_TIMEOUT_MS = 8000;
+// Per-request timeout. A healthy login+snap completes in ~1–2s, so 6s leaves
+// ample headroom while letting a dead/slow path fail fast — important because a
+// failed snapshot otherwise blocks the caregiver's pseudo-live feed.
+const REQUEST_TIMEOUT_MS = 6000;
 const TOKEN_TTL_MS = 50 * 60 * 1000; // Reolink tokens last ~1h; refresh a bit early.
 
 interface RawResponse {
@@ -336,8 +339,13 @@ export async function fetchSnapshot(
     let token: string | null;
     try {
       token = await login(scheme, host, connectIp, port, creds);
-    } catch {
+    } catch (e) {
       lastError = "unreachable"; // connection refused / timeout / TLS
+      // A timeout means the host/port isn't responding at all — trying the other
+      // scheme on the SAME dead port just doubles the wait (the bug that made a
+      // failed snapshot cost ~16s). Fast-fail; only fall through to the other
+      // scheme on a non-timeout error (e.g. a TLS/protocol mismatch).
+      if (e instanceof Error && e.message === "timeout") break;
       continue;
     }
     if (!token) {
@@ -348,8 +356,9 @@ export async function fetchSnapshot(
     let jpeg: Buffer | null;
     try {
       jpeg = await snap(scheme, host, connectIp, port, token);
-    } catch {
+    } catch (e) {
       lastError = "unreachable";
+      if (e instanceof Error && e.message === "timeout") break;
       continue;
     }
     if (jpeg) {
