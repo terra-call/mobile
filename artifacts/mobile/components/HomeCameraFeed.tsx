@@ -41,14 +41,17 @@ import { getReolinkSnapshotSource } from "@/services/reolink";
 import { useAuth } from "@/contexts/AuthContext";
 import { logAudit } from "@/services/audit";
 
-// Target interval between frame *starts* for the pseudo-live feed. Kept
-// deliberately gentle (rather than a true ~1.5s "video" rate) so the full-frame
-// JPEG downloads don't saturate the device's bandwidth while a Twilio WebRTC
-// call runs on the SAME screen — that contention was starving and dropping the
-// phone-camera feed. NOTE: the loop is self-paced (see the poll effect) — it
-// only starts the next frame once the current one resolves, so frames never
-// overlap. POLL_MS is the *minimum* spacing measured from each frame's start.
-const POLL_MS = 2500;
+// Target interval between frame *starts* for the pseudo-live feed. Set to 5s
+// during an active emergency: each snapshot travels camera → home-internet
+// upstream (the slow forwarded-port leg) → server → device, so polling faster
+// than that slow uplink can serve just piles up overlapping fetches and starves
+// the concurrent Twilio WebRTC call running on the SAME screen — the contention
+// that was dropping the phone-camera feed. 5s keeps the feed "live enough" for
+// monitoring while leaving the link real headroom. NOTE: the loop is self-paced
+// (see the poll effect) — it only starts the next frame once the current one
+// resolves, so frames never overlap. POLL_MS is the *minimum* spacing measured
+// from each frame's start.
+const POLL_MS = 5000;
 // Floor between frames. After a slow or failed frame (which already ate most of
 // POLL_MS) we retry promptly rather than adding another full interval on top.
 const MIN_GAP_MS = 500;

@@ -32,6 +32,7 @@ import {
 } from "../lib/reolinkCrypto";
 import { fetchSnapshot, isAllowedCameraHost } from "../lib/reolinkClient";
 import { createFixedWindowLimiter } from "../lib/rateLimit";
+import sharp from "sharp";
 
 const router: IRouter = Router();
 
@@ -46,6 +47,28 @@ const snapshotLimiter = createFixedWindowLimiter({
   windowMs: SNAPSHOT_WINDOW_MS,
   max: SNAPSHOT_MAX_PER_WINDOW,
 });
+
+// DOWNSCALE — the camera returns a full-resolution JPEG (often 4 MP, ~0.5–2 MB).
+// Re-encode it smaller before streaming to the caregiver. This shrinks the
+// server→device leg (lower egress + smoother render on a weak caregiver link);
+// it does NOT speed up the camera→server fetch, which rides the recipient's
+// home-internet upload through the forwarded port. Best-effort: on any sharp
+// failure we fall back to the original bytes so a transcode hiccup never blanks
+// the live feed.
+const SNAPSHOT_MAX_WIDTH = 720;
+const SNAPSHOT_JPEG_QUALITY = 55;
+
+async function downscaleJpeg(jpeg: Buffer): Promise<Buffer> {
+  try {
+    return await sharp(jpeg)
+      .rotate() // honor EXIF orientation before metadata is dropped on re-encode
+      .resize({ width: SNAPSHOT_MAX_WIDTH, withoutEnlargement: true })
+      .jpeg({ quality: SNAPSHOT_JPEG_QUALITY })
+      .toBuffer();
+  } catch {
+    return jpeg;
+  }
+}
 
 /** Strip scheme/whitespace/trailing slash from a user-entered host. */
 function sanitizeHost(raw: unknown): string | null {
@@ -210,9 +233,10 @@ router.get(
       return res.status(502).json({ error: "camera_offline", reason: result.error });
     }
 
+    const jpeg = await downscaleJpeg(result.jpeg);
     res.setHeader("Content-Type", "image/jpeg");
     res.setHeader("Cache-Control", "no-store");
-    return res.end(result.jpeg);
+    return res.end(jpeg);
   },
 );
 
