@@ -80,14 +80,24 @@ type PausedReason = null | "session" | "manual";
 export function HomeCameraFeed({
   targetUserId,
   active,
+  pausedForCall = false,
 }: {
   targetUserId: string;
   /**
-   * Whether continuous ~1.5s polling is permitted. Pass `true` only for genuine
+   * Whether continuous polling is permitted. Pass `true` only for genuine
    * emergencies/escalations. When `false` the feed shows a single frame plus a
    * manual Refresh control and never enters the poll loop.
    */
   active: boolean;
+  /**
+   * Freeze the feed on its last good frame for the duration of a concurrent
+   * Twilio phone-camera call. The poll loop is suspended (so the JPEG fetches
+   * stop starving the WebRTC call's bandwidth) but the last frame stays on
+   * screen under a small "Paused during video call" badge — NOT the offline
+   * overlay. Polling resumes automatically when this flips back to `false`
+   * (call ended / failed), provided the feed is still `active`.
+   */
+  pausedForCall?: boolean;
 }) {
   const { user } = useAuth();
   const [phase, setPhase] = useState<Phase>("loading");
@@ -267,9 +277,15 @@ export function HomeCameraFeed({
     });
   }, [active]);
 
-  // Single source of truth for "should the loop be running right now".
+  // Single source of truth for "should the loop be running right now". A live
+  // phone-camera call (`pausedForCall`) suspends polling so the two streams stop
+  // fighting over the device uplink — the last frame stays frozen meanwhile.
   const polling =
-    phase === "ready" && active && appForeground && pausedReason === null;
+    phase === "ready" &&
+    active &&
+    appForeground &&
+    pausedReason === null &&
+    !pausedForCall;
 
   // ── Live refresh loop — runs only while `polling` ───────────────────────────
   // Self-paced: each frame requests the next only once it settles (load, error,
@@ -363,6 +379,8 @@ export function HomeCameraFeed({
   appForegroundRef.current = appForeground;
   const activePropRef = useRef(active);
   activePropRef.current = active;
+  const pausedForCallRef = useRef(pausedForCall);
+  pausedForCallRef.current = pausedForCall;
 
   useEffect(() => {
     if (!polling) return;
@@ -381,11 +399,13 @@ export function HomeCameraFeed({
       const reason =
         pausedReasonRef.current === "session"
           ? "10-minute session limit"
-          : !appForegroundRef.current
-            ? "app backgrounded"
-            : !activePropRef.current
-              ? "emergency ended"
-              : "feed closed";
+          : pausedForCallRef.current
+            ? "paused for video call"
+            : !appForegroundRef.current
+              ? "app backgrounded"
+              : !activePropRef.current
+                ? "emergency ended"
+                : "feed closed";
       if (actor) {
         logAudit({
           userId: actor,
@@ -432,10 +452,18 @@ export function HomeCameraFeed({
     );
   }
 
-  // Which overlay (if any) sits on top of the last frame.
-  const showSessionPause = pausedReason === "session";
-  const showManualPause = pausedReason === "manual";
-  const showOffline = !showSessionPause && !showManualPause && polling && !live;
+  // Which overlay (if any) sits on top of the last frame. While the phone-camera
+  // call is up we deliberately freeze on the last good frame and show ONLY a
+  // small badge — never the full session/manual/offline overlays, which would
+  // hide the frame and read as an error rather than an intentional pause.
+  const showSessionPause = pausedReason === "session" && !pausedForCall;
+  const showManualPause = pausedReason === "manual" && !pausedForCall;
+  const showOffline =
+    !pausedForCall && !showSessionPause && !showManualPause && polling && !live;
+  // Only badge once we actually have a decoded frame to freeze — otherwise the
+  // initial probe is still loading and we'd be claiming "paused" over an empty
+  // frame. While paused the loader for that first frame is fine to show through.
+  const showCallPause = pausedForCall && phase === "ready" && live;
 
   return (
     <View style={styles.fill}>
@@ -494,6 +522,15 @@ export function HomeCameraFeed({
           <Text style={styles.subtle}>Trying to reconnect…</Text>
         </View>
       )}
+
+      {showCallPause && (
+        <View style={styles.callPauseWrap} pointerEvents="none">
+          <View style={styles.callPauseBadge}>
+            <Feather name="pause" size={12} color="#fff" />
+            <Text style={styles.callPauseText}>Paused during video call</Text>
+          </View>
+        </View>
+      )}
     </View>
   );
 }
@@ -515,4 +552,23 @@ const styles = StyleSheet.create({
     backgroundColor: "#22FF6E",
   },
   buttonText: { color: "#04121f", fontSize: 14, fontWeight: "700" },
+  callPauseWrap: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 10,
+    alignItems: "center",
+  },
+  callPauseBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: "rgba(10,14,28,0.78)",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.18)",
+  },
+  callPauseText: { color: "#fff", fontSize: 12, fontWeight: "600" },
 });

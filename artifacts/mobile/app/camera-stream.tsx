@@ -624,6 +624,16 @@ export default function CameraStreamScreen() {
   // (mode=view) with a known receiverId can pull the proxied snapshot feed.
   const showHomeCamera = mode === "view" && !!receiverId;
 
+  // BANDWIDTH CONTENTION — while the Twilio phone-camera call is connecting or
+  // live on THIS device, freeze the home (Reolink) feed instead of polling it.
+  // The two streams compete for the device's uplink and the continuous JPEG poll
+  // was starving the WebRTC call (and dropping the home feed). On token error or
+  // placeholder mode (Expo Go / web) there is no active WebRTC media, so let the
+  // home feed keep polling — that way a failed call still leaves the caregiver a
+  // live home view rather than a frozen one.
+  const phoneCameraActive =
+    showRealVideo && !tokenError && (connecting || roomConnected);
+
   return (
     <View style={[styles.root, { paddingTop: topPad + 16, paddingBottom: bottomPad + 16 }]}>
       {mode === "publish" && (
@@ -730,12 +740,15 @@ export default function CameraStreamScreen() {
           <View style={styles.feedLabel} pointerEvents="none">
             <Text style={styles.feedLabelText}>HOME CAMERA</Text>
           </View>
-          {/* Secondary home-camera view during a call. Continuous polling only
-              for emergency rooms; otherwise it's a manual on-demand frame so a
-              routine call doesn't run the ~1.5s loop in the background. */}
+          {/* Secondary home-camera view during a call. Frozen on its last frame
+              while the phone camera is live (pausedForCall) to free bandwidth for
+              the WebRTC call; resumes polling if the call ends/fails. Continuous
+              polling is gated to emergency rooms — a routine call only ever pulls
+              a manual on-demand frame. */}
           <HomeCameraFeed
             targetUserId={receiverId}
             active={roomName.startsWith("tc-emrg")}
+            pausedForCall={phoneCameraActive}
           />
         </View>
       )}

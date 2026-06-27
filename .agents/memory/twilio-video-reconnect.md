@@ -19,10 +19,19 @@ starves WebRTC and Twilio fires `onRoomDidDisconnect`.
 flipped state to "not connected".
 
 **How to apply / fixes that matter here:**
-- Keep the home-camera poll cadence gentle while a call can be concurrent
-  (`POLL_MS` is intentionally ≥2.5s, not a true ~1.5s video rate).
+- **A gentle poll cadence is NOT enough — on a real iOS device the home feed
+  still drops the instant Twilio media goes live and stays stable for 1+ min once
+  it stops. The contention is real and severe.** Resolution: fully PAUSE the
+  Reolink poll loop for the duration of the phone-camera call (freeze the last
+  good frame, show a small "paused" badge — never the offline overlay), and
+  auto-resume when the call ends/fails. Pause is driven by a `pausedForCall` prop
+  threaded from `camera-stream` (true while `connecting || roomConnected`, and
+  crucially FALSE on `tokenError` so a failed call still leaves a live home view).
+  The slow `POLL_MS` is now only a secondary guard for the brief windows the feed
+  polls outside an active call.
 - Auto-reconnect on unexpected drop using the still-valid access token
-  (`accessTokenRef`), bounded attempts + exponential backoff.
+  (`accessTokenRef`), bounded attempts + exponential backoff. (Less load-bearing
+  now that polling pauses during the call, but kept for transient network drops.)
 
 # Twilio Video event-model facts (cost us diagnosis time)
 
