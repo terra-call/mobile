@@ -26,7 +26,7 @@
 import { Feather } from "@expo/vector-icons";
 import * as Haptics from "expo-haptics";
 import { router, useLocalSearchParams } from "expo-router";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { logAudit } from "@/services/audit";
@@ -51,6 +51,14 @@ import {
 } from "@/services/twilioVideo";
 
 type Mode = "publish" | "view";
+
+// AUTO-RECONNECT — an unexpected mid-call Twilio disconnect (transient network
+// drop, or WebRTC media starvation while the concurrent Reolink home-camera feed
+// polls full-frame JPEGs on the same device) should self-heal rather than leave a
+// dead "phone camera". We rejoin with the still-valid access token (TTL 1h) using
+// bounded retries + exponential backoff, then surface the real reason on screen.
+const MAX_RECONNECT_ATTEMPTS = 3;
+const RECONNECT_BACKOFF_MS = 1000; // 1s → 2s → 4s
 
 interface RemoteVideoTrack {
   participantSid: string;
@@ -122,10 +130,21 @@ export default function CameraStreamScreen() {
   const twilioRef = useRef<InstanceType<NonNullable<typeof TwilioVideo>> | null>(null);
   // Guard against double-disconnect (endStream + unmount cleanup).
   const disconnectedRef = useRef(false);
+  // Auto-reconnect bookkeeping for unexpected mid-call drops.
+  const reconnectAttemptsRef = useRef(0);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Token mint + audit lifecycle ────────────────────────────────────────
   useEffect(() => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+
+    // Fresh session — clear any stale end/reconnect bookkeeping from a prior run.
+    disconnectedRef.current = false;
+    reconnectAttemptsRef.current = 0;
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
 
     let cancelled = false;
     (async () => {
@@ -313,9 +332,17 @@ export default function CameraStreamScreen() {
 
     return () => {
       cancelled = true;
+      const alreadyEnded = disconnectedRef.current;
+      // Mark the session intentionally ended so a disconnect event fired by the
+      // teardown below doesn't trigger an auto-reconnect on an unmounting screen.
+      disconnectedRef.current = true;
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
       // Best-effort disconnect on unmount — in case the user backs out of
       // the screen without pressing the explicit End Stream button.
-      if (isTwilioVideoAvailable && twilioRef.current && !disconnectedRef.current) {
+      if (!alreadyEnded && isTwilioVideoAvailable && twilioRef.current) {
         try {
           twilioRef.current.disconnect();
         } catch {
@@ -326,11 +353,74 @@ export default function CameraStreamScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomName, mode, user?.id]);
 
+  // Re-join the room using the already-minted access token (permissions are
+  // already granted by the initial connect, so this won't hang). Used by the
+  // auto-reconnect path. Returns false if the SDK/token isn't available.
+  const connectToRoom = useCallback(() => {
+    const token = accessTokenRef.current;
+    if (!isTwilioVideoAvailable || !twilioRef.current || !token) return false;
+    try {
+      twilioRef.current.connect({
+        accessToken: token,
+        roomName,
+        enableAudio: true,
+        enableVideo: mode === "publish",
+        enableRemoteAudio: true,
+        enableNetworkQualityReporting: true,
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }, [roomName, mode]);
+
+  // Schedule one bounded, backed-off reconnect attempt. Called from BOTH the
+  // mid-call drop handler (onRoomDidDisconnect) and the connect-failure handler
+  // (onRoomDidFailToConnect) so a failed rejoin chains into the next attempt
+  // rather than giving up after one try. Surfaces a terminal error once the
+  // attempt budget is exhausted; onRoomDidConnect resets the budget on success.
+  const scheduleReconnect = useCallback(
+    (reason: string) => {
+      if (disconnectedRef.current) return;
+      if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
+        setConnecting(false);
+        setTokenError(VIDEO_TOKEN_ERROR_MESSAGE);
+        setTokenErrorDetail(`Twilio room dropped, reconnect failed: ${reason}`);
+        return;
+      }
+      const attempt = reconnectAttemptsRef.current;
+      reconnectAttemptsRef.current = attempt + 1;
+      // Present this attempt as "reconnecting", clearing any stale error UI.
+      setTokenError(null);
+      setTokenErrorDetail(null);
+      setConnecting(true);
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = setTimeout(
+        () => {
+          if (disconnectedRef.current) return;
+          // connectToRoom() only reports whether the SDK could be ASKED to
+          // rejoin; the real outcome arrives later via onRoomDidConnect
+          // (success → budget reset) or onRoomDidFailToConnect (failure →
+          // chains the next attempt).
+          if (!connectToRoom()) {
+            setConnecting(false);
+            setTokenError(VIDEO_TOKEN_ERROR_MESSAGE);
+            setTokenErrorDetail(`Reconnect failed after drop: ${reason}`);
+          }
+        },
+        RECONNECT_BACKOFF_MS * 2 ** attempt,
+      );
+    },
+    [connectToRoom],
+  );
+
   // ── SDK event handlers ──────────────────────────────────────────────────
   const onRoomDidConnect: RoomEventCb = useMemo(
     () => () => {
       setRoomConnected(true);
       setConnecting(false);
+      // A clean (re)connect clears the auto-reconnect budget.
+      reconnectAttemptsRef.current = 0;
       // AUDIO ROUTING — route call audio to the loudspeaker (not the quiet
       // earpiece) and make sure inbound audio is unmuted, so both sides can
       // hear each other hands-free. This is a no-op on web/Expo Go.
@@ -361,6 +451,30 @@ export default function CameraStreamScreen() {
         typeof event.error === "string"
           ? event.error
           : event.error?.message ?? "unknown room error";
+
+      // A failure while a reconnect is already in progress (budget partially
+      // consumed) chains into the next backoff attempt rather than giving up
+      // after a single try — connectToRoom() returns before the rejoin's real
+      // outcome is known, so this is where a failed rejoin is observed.
+      if (
+        !disconnectedRef.current &&
+        reconnectAttemptsRef.current > 0 &&
+        reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS
+      ) {
+        if (user?.id) {
+          logAudit({
+            userId: user.id,
+            action: "video_stream_disconnected",
+            details: `Reconnect attempt failed (${reason}) — retrying ${
+              reconnectAttemptsRef.current + 1
+            }/${MAX_RECONNECT_ATTEMPTS} (room=${roomName})`,
+          });
+        }
+        scheduleReconnect(reason);
+        return;
+      }
+
+      // Initial connect failure, or reconnect budget exhausted — terminal.
       if (user?.id) {
         logAudit({
           userId: user.id,
@@ -372,7 +486,7 @@ export default function CameraStreamScreen() {
       setTokenErrorDetail(`Twilio rejected room connect: ${reason}`);
       setConnecting(false);
     },
-    [user?.id, roomName],
+    [user?.id, roomName, scheduleReconnect],
   );
 
   // DISCONNECT — distinct from connect-failure. A disconnect can be either
@@ -389,18 +503,32 @@ export default function CameraStreamScreen() {
         typeof event.error === "string"
           ? event.error
           : event.error?.message ?? null;
-      // Errored disconnect (network drop, server kick, etc.) — note it,
-      // but do NOT mark the screen as a token error.
-      if (errMsg && user?.id) {
+      const reason = errMsg ?? "no error detail";
+
+      // Expected disconnect — the user pressed End Stream or the screen is
+      // unmounting (both set disconnectedRef). Nothing to recover.
+      if (disconnectedRef.current) return;
+
+      // Unexpected mid-call drop. The most likely cause is WebRTC media
+      // starvation from the concurrent Reolink home-camera polling saturating
+      // the device's bandwidth. Kick off the bounded auto-reconnect (which
+      // self-heals a transient drop) before any error UI is shown. NOTE: a
+      // normal remote hang-up surfaces as onRoomParticipantDidDisconnect on the
+      // viewer side — not this event — so this path is genuinely for lost
+      // connections rather than intentional call ends.
+      if (user?.id) {
         logAudit({
           userId: user.id,
-          action: "video_stream_connected",
-          details: `Twilio room disconnected with error: ${errMsg} (room=${roomName})`,
+          action: "video_stream_disconnected",
+          details: `Twilio room dropped (${reason}) — reconnect attempt ${
+            reconnectAttemptsRef.current + 1
+          }/${MAX_RECONNECT_ATTEMPTS} (room=${roomName})`,
           targetUserId: receiverId ?? undefined,
         });
       }
+      scheduleReconnect(reason);
     },
-    [user?.id, roomName, receiverId],
+    [user?.id, roomName, receiverId, scheduleReconnect],
   );
 
   // REMOTE AUDIO — when the other participant's audio track arrives, make sure

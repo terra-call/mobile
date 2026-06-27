@@ -47,6 +47,7 @@ export type AuditAction =
   | "camera_activation_failed"
   | "camera_permission_warmup"
   | "video_stream_connected"
+  | "video_stream_disconnected"
   | "unauthorized_token_request"
   // Recipient-initiated call flow ("Call My Caregiver" button)
   | "recipient_initiated_call"

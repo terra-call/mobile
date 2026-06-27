@@ -41,7 +41,11 @@ import { getReolinkSnapshotSource } from "@/services/reolink";
 import { useAuth } from "@/contexts/AuthContext";
 import { logAudit } from "@/services/audit";
 
-const POLL_MS = 1500;
+// Poll cadence for the pseudo-live feed. Kept deliberately gentle (rather than a
+// true ~1.5s "video" rate) so the full-frame JPEG downloads don't saturate the
+// device's bandwidth while a Twilio WebRTC call runs on the SAME screen — that
+// contention was starving and dropping the phone-camera feed ~30s into a call.
+const POLL_MS = 2500;
 // Cross-fade duration when swapping to a freshly-loaded frame. Short enough to
 // feel live, long enough to hide the hard cut between JPEGs.
 const FADE_MS = 280;
