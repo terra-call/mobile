@@ -19,9 +19,10 @@ import {
 } from "@/services/video";
 
 export default function EmergencyCallScreen() {
-  const { receiverName, receiverId } = useLocalSearchParams<{
+  const { receiverName, receiverId, autoStart } = useLocalSearchParams<{
     receiverName?: string;
     receiverId?: string;
+    autoStart?: string;
   }>();
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
@@ -260,6 +261,19 @@ export default function EmergencyCallScreen() {
 
     await attemptCameraActivation();
   };
+
+  // AUTO-START — when launched from the emergency modal's one-tap "Connect Phone
+  // Camera" action (autoStart=1), kick off the video call immediately so the
+  // caregiver lands straight in the two-way feed without a second tap. Runs once.
+  const autoStartedRef = useRef(false);
+  useEffect(() => {
+    if (autoStart === "1" && !autoStartedRef.current) {
+      autoStartedRef.current = true;
+      void startVideoCall();
+    }
+    // startVideoCall is intentionally not in deps — we fire this exactly once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoStart]);
 
   return (
     <Animated.View style={[styles.container, { opacity: fadeIn }]}>

@@ -26,6 +26,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
+import { router } from "expo-router";
 import { HomeCameraFeed } from "@/components/HomeCameraFeed";
 
 export type EmergencyReason = "manual_emergency" | "emergency" | "missed";
@@ -161,6 +162,38 @@ export function EmergencyCameraModal({
             </View>
           </View>
 
+          {/* ONE-TAP PHONE CAMERA — bring up the recipient's front camera for
+              two-way video. Kept as an explicit tap (not auto) so the Reolink
+              feed and a Twilio call don't both run until the caregiver chooses
+              to, easing the bandwidth contention that destabilized the feeds. */}
+          <Pressable
+            style={styles.connectBtn}
+            onPress={() => {
+              if (Platform.OS !== "web") {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(
+                  () => {},
+                );
+              }
+              const recipientId = alert.recipientId;
+              const recipientName = alert.recipientName;
+              // Close this modal first so it isn't left covering the feed, then
+              // route into the emergency-call flow with autoStart so the phone
+              // camera activates and lands in the dual-feed viewer in one tap.
+              onDismiss();
+              router.push({
+                pathname: "/emergency-call",
+                params: {
+                  receiverId: recipientId,
+                  receiverName: recipientName,
+                  autoStart: "1",
+                },
+              });
+            }}
+          >
+            <Feather name="video" size={24} color="#06210f" />
+            <Text style={styles.connectBtnText}>Connect Phone Camera</Text>
+          </Pressable>
+
           {/* Actions */}
           <Pressable
             style={styles.dismissBtn}
@@ -261,5 +294,26 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#fff",
     fontFamily: "Inter_700Bold",
+  },
+  connectBtn: {
+    backgroundColor: "#22FF6E",
+    borderRadius: 18,
+    paddingVertical: 20,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+    shadowColor: "#22FF6E",
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  connectBtnText: {
+    fontSize: 19,
+    fontWeight: "800",
+    color: "#06210f",
+    fontFamily: "Inter_700Bold",
+    letterSpacing: 0.3,
   },
 });

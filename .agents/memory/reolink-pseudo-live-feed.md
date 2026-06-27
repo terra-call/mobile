@@ -57,10 +57,35 @@ distinguish the abort either — the only airtight fix (`key={frameId}` to remou
 per frame) reintroduces per-frame blank flicker and defeats the double-buffer.
 Not worth it.
 
+# Two network legs — know which one a fix actually helps
+
+The snapshot crosses TWO legs: (1) camera → api-server, which rides the
+recipient's HOME-INTERNET UPLOAD through a forwarded port — this is the slow,
+flappy bottleneck; and (2) api-server → caregiver tablet (egress). They are
+independent.
+- **Server-side JPEG downscale** (sharp resize→720w q55 in routes/reolink.ts,
+  best-effort with try/catch fallback to original bytes) only shrinks leg 2. It
+  lowers egress/decode pressure on the tablet but does NOTHING for the slow leg 1.
+- **The lever for leg 1 is fewer/less-overlapping requests** — i.e. a longer
+  `POLL_MS` (raised to 5000) and the self-paced serial loop above. Do not expect
+  server downscale to fix camera→server slowness.
+
 # Delivery
 
-Client (HomeCameraFeed.tsx) changes are JS-only → ship via `eas update` (OTA), no
-version bump. Server (reolinkClient.ts) changes only reach the tablet after a
-REDEPLOY — the tablet hits the deployed api-server via `EXPO_PUBLIC_API_URL`, not
-the dev workflow. If the feed still flaps after both land, next escalation is
-server-side JPEG downscaling to cut per-snapshot bytes.
+Client (HomeCameraFeed.tsx / EmergencyCameraModal.tsx / emergency-call.tsx)
+changes are JS-only → ship via `eas update` (OTA), no version bump. Server
+(reolink.ts / reolinkClient.ts) changes only reach the tablet after a REDEPLOY —
+the tablet hits the deployed api-server via `EXPO_PUBLIC_API_URL`, not the dev
+workflow. Note `sharp` is a native dep on the api-server; it works on Replit
+deploy (same Nix env as dev).
+
+# Phone camera from the emergency modal (one-tap, not auto)
+
+EmergencyCameraModal shows the home (Reolink) feed + a full-width "Connect Phone
+Camera" button. It does NOT auto-connect Twilio — running the Reolink poll AND a
+Twilio call at once competes for device bandwidth (the contention that dropped the
+feed), so the phone camera is gated behind an explicit tap. The button reuses the
+tested path: `onDismiss()` then `router.push('/emergency-call', {autoStart:"1"})`,
+and emergency-call's run-once effect fires `startVideoCall()` (consent → activate
+→ `router.replace('/camera-stream')` dual feed). **Why:** avoids duplicating the
+event/audit/consent/activation logic that already lives in startVideoCall.
