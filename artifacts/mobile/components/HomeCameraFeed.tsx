@@ -280,12 +280,21 @@ export function HomeCameraFeed({
   // Single source of truth for "should the loop be running right now". A live
   // phone-camera call (`pausedForCall`) suspends polling so the two streams stop
   // fighting over the device uplink — the last frame stays frozen meanwhile.
+  //
+  // EXCEPTION: keep polling while paused until we have actually acquired one good
+  // frame (`!live`). Otherwise, in the caregiver-initiated dual-feed the call is
+  // already live the instant this screen mounts, so the freeze would kick in
+  // before the feed ever fetched a frame — leaving a permanently BLACK home half
+  // (no frame to freeze, offline overlay suppressed, "paused" badge gated on
+  // `live`). Acquiring a single frame is a one-shot fetch, not the continuous
+  // poll that caused the WebRTC contention, so it's safe during a call. Once the
+  // first frame decodes (`live` true) the loop stops and the frame stays frozen.
   const polling =
     phase === "ready" &&
     active &&
     appForeground &&
     pausedReason === null &&
-    !pausedForCall;
+    (!pausedForCall || !live);
 
   // ── Live refresh loop — runs only while `polling` ───────────────────────────
   // Self-paced: each frame requests the next only once it settles (load, error,
@@ -464,6 +473,10 @@ export function HomeCameraFeed({
   // initial probe is still loading and we'd be claiming "paused" over an empty
   // frame. While paused the loader for that first frame is fine to show through.
   const showCallPause = pausedForCall && phase === "ready" && live;
+  // Paused for a call but we haven't captured the frame to freeze yet (the
+  // dual-feed mounts with the call already live). Show a small loader instead of
+  // a black panel while the one-shot acquisition fetch is in flight.
+  const showCallAcquiring = pausedForCall && phase === "ready" && !live;
 
   return (
     <View style={styles.fill}>
@@ -520,6 +533,13 @@ export function HomeCameraFeed({
           <Feather name="wifi-off" size={44} color="rgba(255,255,255,0.45)" />
           <Text style={styles.title}>Home camera offline</Text>
           <Text style={styles.subtle}>Trying to reconnect…</Text>
+        </View>
+      )}
+
+      {showCallAcquiring && (
+        <View style={[styles.center, styles.overlay]}>
+          <ActivityIndicator size="small" color="#51aafa" />
+          <Text style={styles.subtle}>Loading home camera…</Text>
         </View>
       )}
 

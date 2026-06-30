@@ -32,6 +32,17 @@ flipped state to "not connected".
 - Auto-reconnect on unexpected drop using the still-valid access token
   (`accessTokenRef`), bounded attempts + exponential backoff. (Less load-bearing
   now that polling pauses during the call, but kept for transient network drops.)
+- **`pausedForCall` must NOT block the FIRST frame.** The caregiver-initiated
+  dual-feed (`emergency-call` → `camera-stream`) mounts with the Twilio call
+  already live, so `pausedForCall` (= `connecting || roomConnected`) is true from
+  frame zero. If the poll gate is a bare `!pausedForCall`, the home feed freezes
+  before it ever fetched anything → permanent BLACK panel (offline overlay
+  suppressed by the pause, "paused" badge gated on `live` which never flips). Gate
+  must be `(!pausedForCall || !live)`: keep polling while paused until ONE good
+  frame is acquired, then freeze on it. A single acquisition fetch is not the
+  continuous poll that caused contention, so it's safe mid-call. The recipient
+  "I'M NOT OK" path is immune because it renders `HomeCameraFeed` in
+  `EmergencyCameraModal` with no `pausedForCall`.
 
 # Twilio Video event-model facts (cost us diagnosis time)
 
