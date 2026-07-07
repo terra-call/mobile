@@ -17,6 +17,8 @@ import {
   sendExpoPushNotification,
   triggerSmsAlert,
   callNotifyApi,
+  NOTIFICATION_CHANNELS,
+  TERRA_CALL_ALERT_SOUND,
 } from "@/services/notifications";
 import { logEvent } from "@/services/events";
 import { logAudit } from "@/services/audit";
@@ -318,7 +320,12 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
             cgTokens,
             "🚨 Terra Call — Emergency Alert",
             "A care recipient has not checked in. Open the app for details.",
-            { type: "emergency", userId: user.id, receiverName }
+            { type: "emergency", userId: user.id, receiverName },
+            {
+              channelId: NOTIFICATION_CHANNELS.emergencies,
+              sound: TERRA_CALL_ALERT_SOUND,
+              priority: "high",
+            }
           );
         }
         // SMS backup via API server (only when receiver has opted in to SMS)
@@ -341,7 +348,8 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
             cgTokens,
             "⚠️ Terra Call — Missed Check-In",
             "A care recipient missed their scheduled check-in. Open the app for details.",
-            { type: "missed", userId: user.id, receiverName }
+            { type: "missed", userId: user.id, receiverName },
+            { channelId: NOTIFICATION_CHANNELS.alerts, priority: "high" }
           );
         }
         // SMS backup via API server (only when receiver has opted in to SMS)
@@ -505,7 +513,12 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
           cgTokens,
           "🚨 Terra Call — Emergency Alert",
           "A care recipient needs help immediately. Open the app to respond.",
-          { type: "manual_emergency", userId: user.id, receiverName }
+          { type: "manual_emergency", userId: user.id, receiverName },
+          {
+            channelId: NOTIFICATION_CHANNELS.emergencies,
+            sound: TERRA_CALL_ALERT_SOUND,
+            priority: "high",
+          }
         );
       }
       if (cgPhones.length > 0 && smsConsent) {

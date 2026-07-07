@@ -48,6 +48,70 @@ Notifications.setNotificationHandler({
   }),
 });
 
+// ── Custom alert sound + notification channels ────────────────────────────────
+// PLACEHOLDER TONE — swap for Mike's branded Terra Call audio before final
+// launch. This filename MUST match the file bundled via app.json
+// (expo-notifications `sounds`) and the server-side sound name in
+// artifacts/api-server/src/lib/notificationScheduler.ts (TERRA_CALL_ALERT_SOUND).
+//   >>> BRANDED ASSET NEEDED FROM MIKE <<<
+//   Asset path: artifacts/mobile/assets/sounds/terra_call_alert.wav
+export const TERRA_CALL_ALERT_SOUND = "terra_call_alert.wav";
+
+// Android notification channels. These IDs MUST stay in sync with the server
+// (notificationScheduler.ts PUSH_CHANNELS) — a push payload's `channelId`
+// selects which channel governs sound / importance / Do-Not-Disturb on-device.
+export const NOTIFICATION_CHANNELS = {
+  incomingCalls: "incoming_calls",
+  emergencies: "emergencies",
+  alerts: "alerts",
+} as const;
+
+// Creates the Android notification channels. No-op on iOS/web — iOS routes the
+// sound via UNNotificationSound in the push `sound` field instead of channels.
+// Safe to call repeatedly (Android upserts by id). NOTE: once a channel exists
+// on a device Android LOCKS its sound/importance; changing them later needs a
+// NEW channel id (or the user editing the channel in system settings).
+export async function configureNotificationChannels(): Promise<void> {
+  if (Platform.OS !== "android") return;
+  try {
+    // Incoming video calls (both directions). Urgent + distinct ringtone, HIGH
+    // importance for a heads-up, but RESPECTS Do Not Disturb — an incoming call
+    // is attention-grabbing, not a life-safety emergency.
+    await Notifications.setNotificationChannelAsync(NOTIFICATION_CHANNELS.incomingCalls, {
+      name: "Incoming calls",
+      importance: Notifications.AndroidImportance.HIGH,
+      sound: TERRA_CALL_ALERT_SOUND,
+      vibrationPattern: [0, 400, 250, 400, 250, 400],
+      lightColor: "#22FF6E",
+      bypassDnd: false,
+    });
+
+    // Genuine emergencies (I'M NOT OK, missed-check-in escalation). MAX
+    // importance and OVERRIDES Do Not Disturb / silent mode. bypassDnd only
+    // takes effect once the user grants the app "Do Not Disturb access" in
+    // system settings (backed by ACCESS_NOTIFICATION_POLICY in app.json).
+    await Notifications.setNotificationChannelAsync(NOTIFICATION_CHANNELS.emergencies, {
+      name: "Emergency alerts",
+      importance: Notifications.AndroidImportance.MAX,
+      sound: TERRA_CALL_ALERT_SOUND,
+      vibrationPattern: [0, 600, 200, 600, 200, 600],
+      lightColor: "#FF3B30",
+      bypassDnd: true,
+    });
+
+    // Routine alerts (e.g. missed check-in warning). HIGH so it heads-up, but
+    // uses the DEFAULT system sound and RESPECTS Do Not Disturb.
+    await Notifications.setNotificationChannelAsync(NOTIFICATION_CHANNELS.alerts, {
+      name: "Alerts",
+      importance: Notifications.AndroidImportance.HIGH,
+      bypassDnd: false,
+    });
+  } catch {
+    // Channel setup failures are non-fatal — pushes still deliver on the
+    // auto-created default channel.
+  }
+}
+
 // ── Permission helpers ────────────────────────────────────────────────────────
 // "undetermined" = OS hasn't been asked yet (so we can show the pre-prompt and
 // then trigger the system dialog). "denied" = user said no — we cannot re-ask
@@ -166,16 +230,34 @@ export async function cancelAllReminders(): Promise<void> {
 // ── Send push notification via Expo Push API ──────────────────────────────────
 // Works from device when caregiver tokens are known.
 // For full background delivery, use the API server scheduler.
+export interface PushOptions {
+  /** iOS sound file name (bundled) or "default". Android sound comes from the channel. */
+  sound?: string | null;
+  /** Android notification channel id (see NOTIFICATION_CHANNELS). */
+  channelId?: string;
+  /** Expo delivery priority; "high" yields Android heads-up + prompt delivery. */
+  priority?: "default" | "normal" | "high";
+}
+
 export async function sendExpoPushNotification(
   tokens: string[],
   title: string,
   body: string,
-  data?: Record<string, string>
+  data?: Record<string, string>,
+  opts?: PushOptions
 ): Promise<void> {
   const validTokens = tokens.filter((t) => t && t.startsWith("ExponentPushToken"));
   if (validTokens.length === 0) return;
 
-  const messages = validTokens.map((to) => ({ to, title, body, data: data ?? {}, sound: "default" }));
+  const messages = validTokens.map((to) => ({
+    to,
+    title,
+    body,
+    data: data ?? {},
+    sound: opts?.sound ?? "default",
+    priority: opts?.priority ?? "high",
+    ...(opts?.channelId ? { channelId: opts.channelId } : {}),
+  }));
 
   try {
     await fetch("https://exp.host/--/api/v2/push/send", {

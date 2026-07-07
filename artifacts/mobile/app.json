@@ -2,7 +2,7 @@
   "expo": {
     "name": "Terra Call",
     "slug": "mobile",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon_v2_text.png",
     "scheme": "mobile",
@@ -40,7 +40,8 @@
         "android.permission.MODIFY_AUDIO_SETTINGS",
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.POST_NOTIFICATIONS"
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.ACCESS_NOTIFICATION_POLICY"
       ]
     },
     "web": {
@@ -60,7 +61,7 @@
         {
           "icon": "./assets/images/icon_v2_text.png",
           "color": "#22FF6E",
-          "sounds": []
+          "sounds": ["./assets/sounds/terra_call_alert.wav"]
         }
       ],
       [

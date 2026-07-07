@@ -29,7 +29,7 @@ import {
   isPermittedForReceiver,
   verifyFirebaseIdToken,
 } from "../middlewares/firebaseAuth";
-import { sendPush } from "../lib/notificationScheduler";
+import { sendPush, PUSH_CHANNELS, TERRA_CALL_ALERT_SOUND } from "../lib/notificationScheduler";
 
 const router: IRouter = Router();
 
@@ -405,6 +405,10 @@ router.post(
         // can ignore the push if the device happens to be logged into a
         // different account (e.g. stale push token routed to wrong device).
         receiverUid: targetUserId,
+      }, {
+        channelId: PUSH_CHANNELS.incomingCalls,
+        sound: TERRA_CALL_ALERT_SOUND,
+        priority: "high",
       });
       pushSent = pushResult.delivered;
       if (!pushResult.delivered) {
@@ -618,6 +622,10 @@ router.post(
             // device is logged into a different account than the intended
             // caregiver (e.g. stale token routed to wrong device).
             caregiverUid: caregiverId,
+          }, {
+            channelId: PUSH_CHANNELS.incomingCalls,
+            sound: TERRA_CALL_ALERT_SOUND,
+            priority: "high",
           });
           pushSent = pushResult.delivered;
           if (!pushResult.delivered) {

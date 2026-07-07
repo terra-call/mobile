@@ -39,7 +39,7 @@ import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { CareDataProvider, useCareData } from "@/contexts/CareDataContext";
 import { STORAGE_KEYS } from "@/constants/storage";
 import { logAudit } from "@/services/audit";
-import { registerForPushNotifications } from "@/services/notifications";
+import { configureNotificationChannels, registerForPushNotifications } from "@/services/notifications";
 import { db, isFirebaseConfigured } from "@/services/firebase";
 
 // Module-level dedupe so the push handler and the Firestore handler
@@ -110,6 +110,13 @@ const AUTH_SCREENS = ["login", "register", "onboarding"];
 function NotificationInitializer() {
   const { user } = useAuth();
   const registeredRef = useRef<string | null>(null);
+
+  // Create Android notification channels once on mount for EVERY user — both
+  // caregivers and care recipients receive incoming-call and emergency pushes,
+  // so both devices need the custom-sound channels to exist.
+  useEffect(() => {
+    configureNotificationChannels();
+  }, []);
 
   useEffect(() => {
     if (!user || user.role !== "care-receiver") return;

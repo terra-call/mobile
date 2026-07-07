@@ -130,7 +130,12 @@ export async function sendEmergencyAlert(
     "Manual emergency alert"
   );
 
-  await sendPush(caregiverTokens, title, body, { type: "manual_emergency", userId, receiverName });
+  await sendPush(caregiverTokens, title, body, { type: "manual_emergency", userId, receiverName }, {
+    channelId: PUSH_CHANNELS.emergencies,
+    sound: TERRA_CALL_ALERT_SOUND,
+    priority: "high",
+    iosCritical: true,
+  });
 
   if (isSmsConfigured() && caregiverPhones.length > 0) {
     await sendDirectSms(caregiverPhones, receiverName, "manual_emergency", 0);
@@ -162,18 +167,71 @@ export async function sendDirectSms(
   await sendSmsToMany(phones, body);
 }
 
+// ── Notification channels + custom alert sound ────────────────────────────────
+// These IDs MUST stay in sync with the mobile client
+// (artifacts/mobile/services/notifications.ts NOTIFICATION_CHANNELS). A push
+// payload's `channelId` selects the Android channel that governs sound,
+// importance, and Do-Not-Disturb behaviour on the device.
+export const PUSH_CHANNELS = {
+  incomingCalls: "incoming_calls",
+  emergencies: "emergencies",
+  alerts: "alerts",
+} as const;
+
+// PLACEHOLDER TONE — swap for Mike's branded Terra Call audio before final
+// launch. Must match the bundled file name in the mobile app
+// (artifacts/mobile/assets/sounds/terra_call_alert.wav, registered in app.json).
+// Used as the iOS UNNotificationSound name; on Android the channel's own sound
+// (configured client-side) takes precedence.
+//   >>> BRANDED ASSET NEEDED FROM MIKE <<<
+export const TERRA_CALL_ALERT_SOUND = "terra_call_alert.wav";
+
+// iOS "critical alert" sounds pierce silent mode / Do Not Disturb, but require
+// Apple's `com.apple.developer.usernotifications.critical-alerts` entitlement
+// (must be requested from Apple, then declared in app.json). Until it is
+// granted keep this FALSE — sending `critical: true` without the entitlement
+// makes APNs reject/downgrade the push. Android DND override already works
+// today via the `emergencies` channel's bypassDnd flag.
+const IOS_CRITICAL_ALERTS_ENABLED = false;
+
+export interface PushOptions {
+  /** iOS sound file name (bundled) or "default". Android sound comes from the channel. */
+  sound?: string | null;
+  /** Android notification channel id (see PUSH_CHANNELS). */
+  channelId?: string;
+  /** Expo delivery priority; "high" yields Android heads-up + prompt delivery. */
+  priority?: "default" | "normal" | "high";
+  /** Route through an iOS critical alert (needs the entitlement; see flag above). */
+  iosCritical?: boolean;
+}
+
 // ── Expo Push API sender ──────────────────────────────────────────────────────
 
 export async function sendPush(
   tokens: string[],
   title: string,
   body: string,
-  data?: Record<string, string>
+  data?: Record<string, string>,
+  opts?: PushOptions
 ): Promise<{ validTokens: number; delivered: boolean }> {
   const valid = tokens.filter((t) => t?.startsWith("ExponentPushToken"));
   if (valid.length === 0) return { validTokens: 0, delivered: false };
 
-  const messages = valid.map((to) => ({ to, title, body, data: data ?? {}, sound: "default" }));
+  const soundName = opts?.sound ?? "default";
+  const iosSound =
+    opts?.iosCritical && IOS_CRITICAL_ALERTS_ENABLED
+      ? { critical: true, name: soundName, volume: 1 }
+      : soundName;
+
+  const messages = valid.map((to) => ({
+    to,
+    title,
+    body,
+    data: data ?? {},
+    sound: iosSound,
+    priority: opts?.priority ?? "high",
+    ...(opts?.channelId ? { channelId: opts.channelId } : {}),
+  }));
   try {
     const res = await fetch("https://exp.host/--/api/v2/push/send", {
       method: "POST",
@@ -215,7 +273,13 @@ async function tick(): Promise<void> {
         entry.caregiverTokens,
         "🚨 Terra Call — Emergency Alert",
         "A care recipient has not checked in. Open the app for details.",
-        { type: "emergency", userId, receiverName: entry.receiverName }
+        { type: "emergency", userId, receiverName: entry.receiverName },
+        {
+          channelId: PUSH_CHANNELS.emergencies,
+          sound: TERRA_CALL_ALERT_SOUND,
+          priority: "high",
+          iosCritical: true,
+        }
       );
 
       if (entry.receiverToken) {
@@ -223,7 +287,13 @@ async function tick(): Promise<void> {
           [entry.receiverToken],
           "URGENT: Check In Now",
           "Your caregiver has been alerted. Please check in immediately.",
-          { type: "emergency_reminder" }
+          { type: "emergency_reminder" },
+          {
+            channelId: PUSH_CHANNELS.emergencies,
+            sound: TERRA_CALL_ALERT_SOUND,
+            priority: "high",
+            iosCritical: true,
+          }
         );
       }
 
@@ -248,7 +318,8 @@ async function tick(): Promise<void> {
         entry.caregiverTokens,
         "⚠️ Terra Call — Missed Check-In",
         "A care recipient missed their scheduled check-in. Open the app for details.",
-        { type: "missed", userId, receiverName: entry.receiverName }
+        { type: "missed", userId, receiverName: entry.receiverName },
+        { channelId: PUSH_CHANNELS.alerts, priority: "high" }
       );
 
       if (entry.receiverToken) {
@@ -256,7 +327,8 @@ async function tick(): Promise<void> {
           [entry.receiverToken],
           "Missed Check-In Reminder",
           "You missed your scheduled check-in. Please check in now.",
-          { type: "missed_reminder" }
+          { type: "missed_reminder" },
+          { channelId: PUSH_CHANNELS.alerts, priority: "high" }
         );
       }
 
