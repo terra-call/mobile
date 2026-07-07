@@ -388,11 +388,14 @@ router.post(
     // on devices with the app foregrounded or recently backgrounded.
     let pushSent = false;
     if (receiverPushToken && receiverPushToken.startsWith("ExponentPushToken")) {
-      // PHI hygiene (per replit.md): title/body are generic with NO names.
-      // The caregiver name rides in the silent `data` payload only, shown
-      // in-app once the device is unlocked — never on a locked screen.
-      const title = "Incoming Video Call";
-      const body = "Tap to answer";
+      // The CAREGIVER's name is shown on the recipient's incoming-call
+      // notification (e.g. "Pat is calling"). This is NOT a PHI concern —
+      // it's the caregiver's identity, not the care recipient's health info,
+      // and it makes the call recognizable/answerable from a locked screen.
+      // (The recipient's OWN name is still kept out of any push per replit.md.)
+      const callerLabel = caregiverName?.trim() || "Your caregiver";
+      const title = `${callerLabel} is calling`;
+      const body = `${callerLabel} is checking on you. Tap to answer.`;
       const pushResult = await sendPush([receiverPushToken], title, body, {
         type: "camera_activate",
         initiatedBy: "caregiver",
