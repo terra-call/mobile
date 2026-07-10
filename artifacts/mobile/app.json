@@ -2,7 +2,7 @@
   "expo": {
     "name": "Terra Call",
     "slug": "mobile",
-    "version": "1.2.0",
+    "version": "1.3.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon_v2_text.png",
     "scheme": "mobile",
@@ -61,7 +61,9 @@
         {
           "icon": "./assets/images/icon_v2_text.png",
           "color": "#22FF6E",
-          "sounds": ["./assets/sounds/terra_call_alert.wav"]
+          "sounds": [
+            "./assets/sounds/terra_call_alert.wav"
+          ]
         }
       ],
       [
@@ -91,7 +93,8 @@
           "microphonePermission": "Terra Call uses your microphone during emergency video check-ins so you can talk with your caregiver.",
           "recordAudioAndroid": true
         }
-      ]
+      ],
+      "expo-audio"
     ],
     "experiments": {
       "typedRoutes": true,

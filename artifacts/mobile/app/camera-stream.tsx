@@ -36,6 +36,7 @@ import {
   markEmergencyEventVideoConnected,
 } from "@/services/emergencyEventLog";
 import { requestVideoToken, VIDEO_TOKEN_ERROR_MESSAGE } from "@/services/video";
+import { stopRingtone } from "@/services/ringtone";
 import { HomeCameraFeed } from "@/components/HomeCameraFeed";
 import {
   TwilioVideo,
@@ -112,6 +113,17 @@ export default function CameraStreamScreen() {
   const selfLabel = user?.role === "caregiver" ? "Caregiver" : "Care-recipient";
 
   const [connecting, setConnecting] = useState(true);
+
+  // RING — silence the in-app incoming-call ringtone once we reach this screen.
+  // For a caregiver-initiated call the recipient's activation handler started
+  // the ring; stop it the moment the call resolves (connected or failed →
+  // `connecting` flips false) and always on unmount. Harmless no-op for the
+  // caller side, where no ring was ever started.
+  useEffect(() => {
+    if (!connecting) stopRingtone();
+  }, [connecting]);
+  useEffect(() => () => stopRingtone(), []);
+
   const [tokenError, setTokenError] = useState<string | null>(null);
   // DIAGNOSTIC — raw error string from Twilio SDK / token endpoint, shown
   // under the friendly "Video unavailable" copy so we can debug failures

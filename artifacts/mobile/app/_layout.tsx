@@ -40,6 +40,7 @@ import { CareDataProvider, useCareData } from "@/contexts/CareDataContext";
 import { STORAGE_KEYS } from "@/constants/storage";
 import { logAudit } from "@/services/audit";
 import { configureNotificationChannels, registerForPushNotifications } from "@/services/notifications";
+import { startRingtone, stopRingtone } from "@/services/ringtone";
 import { db, isFirebaseConfigured } from "@/services/firebase";
 
 // Module-level dedupe so the push handler and the Firestore handler
@@ -185,6 +186,10 @@ function CameraActivationListener() {
 
       const roomName = data.roomName;
       const caregiverName = data.caregiverName ?? "Caregiver";
+      // RING — the recipient is being called by a caregiver. Start the in-app
+      // looping ringtone (survives the navigation as a singleton); camera-stream
+      // stops it once the call connects / fails or on unmount.
+      void startRingtone();
       // Navigate immediately. Any cold-start settle delay is owned by the
       // cold-start effect below (so it can be cancelled if auth/role changes
       // during the window) — never by a fire-and-forget timer in here.
@@ -311,6 +316,8 @@ function CameraActivationFirestoreListener() {
             processedAt: serverTimestamp(),
           }).catch(() => {});
 
+          // RING — recipient is being called by a caregiver (Firestore path).
+          void startRingtone();
           router.push({
             pathname: "/camera-stream",
             params: {
@@ -353,6 +360,16 @@ function IncomingCallListener() {
     sessionStartRef.current = Date.now();
     handledRef.current = new Set();
   }, [user?.id]);
+
+  // RING — caregiver side. Loop the in-app ringtone while the IncomingCallModal
+  // is up (any surfacing path), and stop it the moment the call clears for any
+  // reason: Answer / Decline (both null out `incoming`), the recipient
+  // cancelling (Firestore doc change nulls `incoming`), or unmount.
+  useEffect(() => {
+    if (!incoming) return;
+    void startRingtone();
+    return () => stopRingtone();
+  }, [incoming]);
 
   // PUSH WAKEUP — caregiver side. The Firestore listener below only fires
   // while the app is foregrounded (onSnapshot pauses in background), so a push
