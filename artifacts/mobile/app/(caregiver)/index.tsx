@@ -21,6 +21,7 @@ import { useCareData } from "@/contexts/CareDataContext";
 import { useColors } from "@/hooks/useColors";
 import { registerForPushNotifications } from "@/services/notifications";
 import { logAudit } from "@/services/audit";
+import { db, isFirebaseConfigured } from "@/services/firebase";
 import { formatTimeAgo } from "@/utils/time";
 
 type FilterType = "all" | "safe" | "issues";
@@ -38,6 +39,71 @@ export default function CaregiverDashboard() {
   const insets = useSafeAreaInsets();
   const [filter, setFilter] = useState<FilterType>("all");
   const [refreshing, setRefreshing] = useState(false);
+
+  // CLEAR ALERT HISTORY — per-caregiver "cleared before" watermark (epoch ms).
+  // Alerts live on each RECIPIENT's user doc (recentAlerts[]), which this
+  // caregiver cannot write (firestore.rules: users update is self/admin only)
+  // and which other caregivers also read. So "clearing" is non-destructive:
+  // we store `alertsClearedAt` on the CAREGIVER's own doc and simply hide
+  // feed entries at/before that moment. Other caregivers and admin records
+  // are untouched, and the watermark syncs across this caregiver's devices.
+  const [clearedAt, setClearedAt] = useState<number>(0);
+  useEffect(() => {
+    if (!user?.id || !isFirebaseConfigured || !db) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { doc, getDoc } = await import("firebase/firestore");
+        const snap = await getDoc(doc(db!, "users", user.id));
+        const iso = snap.data()?.alertsClearedAt;
+        if (!cancelled && typeof iso === "string") {
+          const ms = new Date(iso).getTime();
+          if (Number.isFinite(ms)) setClearedAt(ms);
+        }
+      } catch {
+        // Offline / permission hiccup — feed just shows everything.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id]);
+
+  const handleClearAlerts = () => {
+    Alert.alert(
+      "Clear Alert History",
+      "Hide all prior alerts from your feed? New alerts will still appear. This only clears YOUR view — other caregivers and admin records are not affected.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Clear",
+          style: "destructive",
+          onPress: () => {
+            const nowIso = new Date().toISOString();
+            // Optimistic — hide immediately; persistence is best-effort.
+            setClearedAt(new Date(nowIso).getTime());
+            if (user?.id && isFirebaseConfigured && db) {
+              (async () => {
+                try {
+                  const { doc, updateDoc } = await import("firebase/firestore");
+                  await updateDoc(doc(db!, "users", user.id), {
+                    alertsClearedAt: nowIso,
+                  });
+                } catch {
+                  // Best-effort — local clear already applied for this session.
+                }
+              })();
+              logAudit({
+                userId: user.id,
+                action: "alert_history_cleared",
+                details: `Caregiver cleared their alert feed view (watermark ${nowIso})`,
+              }).catch(() => {});
+            }
+          },
+        },
+      ],
+    );
+  };
 
   // HIPAA audit — log once per session when caregiver loads care-recipient data.
   // Debounced via ref so we don't write a row on every re-render.
@@ -82,6 +148,8 @@ export default function CaregiverDashboard() {
         at: a.at,
       })),
     )
+    // Respect this caregiver's clear-history watermark (see clearedAt above).
+    .filter((a) => new Date(a.at).getTime() > clearedAt)
     .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
     .slice(0, 15);
 
@@ -209,6 +277,12 @@ export default function CaregiverDashboard() {
                 <Text style={[styles.alertFeedTitle, { color: colors.destructive }]}>
                   Recent Alerts
                 </Text>
+                <View style={{ flex: 1 }} />
+                <Pressable onPress={handleClearAlerts} hitSlop={10}>
+                  <Text style={[styles.clearText, { color: colors.mutedForeground }]}>
+                    Clear
+                  </Text>
+                </Pressable>
               </View>
               {alertFeed.map((a, i) => (
                 <View
@@ -329,6 +403,12 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
     textTransform: "uppercase",
     fontFamily: "Inter_700Bold",
+  },
+  clearText: {
+    fontSize: 12,
+    fontWeight: "600",
+    fontFamily: "Inter_600SemiBold",
+    textDecorationLine: "underline",
   },
   alertRow: {
     flexDirection: "row",

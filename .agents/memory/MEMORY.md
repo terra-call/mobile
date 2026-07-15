@@ -6,6 +6,7 @@
 - [EAS runtime policy + native placeholders](eas-runtime-policy-and-native-placeholders.md) — appVersion policy lets OTA JS drift onto a mismatched native binary; camera-stream "Run an EAS dev build" placeholder == SDK require() failed, not a creds/room issue; Video needs API Key secrets.
 - [Caregiver data scoping](caregiver-data-scoping.md) — caregiver care-receiver list is unfiltered client-side; any new caregiver PHI surface must self-gate on `permittedCaregiverIds`.
 - [pnpm overrides](pnpm-overrides.md) — patch vulnerable transitive deps via overrides; caret jumps past parent's range so pin exact when parent uses `~x.y`; re-grep lockfile after install.
+- [Alert feed clearing](alert-feed-clearing.md) — caregiver "clear" is a per-viewer alertsClearedAt watermark on their OWN doc; never delete shared recentAlerts on recipient docs.
 - [Caregiver alert history](caregiver-alert-history.md) — per-press alerts live on recipient user doc (events is admin-only); atomic append via runTransaction; emergency time uses lastEmergencyAt.
 - [Video call mode vs role](video-call-mode-vs-role.md) — camera-stream `mode` is media role (publish/view), NOT account role; targetUserId is always the recipient (room owner); publisher must hold camera+mic perms or Android connect hangs.
 - [In-app ringtone](in-app-ringtone.md) — real ringtone = expo-audio loop separate from one-shot push sound; two asymmetric ring sites (caregiver modal vs recipient camera-stream nav); async start needs a `wantRinging` latch or fast decline leaks the ring.

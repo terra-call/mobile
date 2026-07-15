@@ -28,6 +28,7 @@ export type AuditAction =
   | "alert_emergency"
   | "alert_im_not_ok"
   | "data_accessed"
+  | "alert_history_cleared"
   | "profile_updated"
   | "organization_created"
   | "organization_updated"
