@@ -1,7 +1,8 @@
 import React from "react";
-import { StyleSheet } from "react-native";
+import { Platform, StyleSheet } from "react-native";
 import MapView, { Marker } from "react-native-maps";
 import type { CareReceiver } from "@/contexts/CareDataContext";
+import { MapFallbackList } from "@/components/MapFallbackList";
 
 const STATUS_COLORS: Record<string, string> = {
   "checked-in": "#22FF6E",
@@ -16,6 +17,20 @@ interface MapDisplayProps {
 
 export function MapDisplay({ receivers }: MapDisplayProps) {
   const withLocation = receivers.filter((r) => r.location);
+
+  // Android's map requires a Google Maps API key baked into the native build.
+  // No key is configured yet, and rendering MapView without one crashes the
+  // app natively ("Terra Call closed because this app has a bug"). Until a key
+  // is added to app.json (android.config.googleMaps.apiKey) and a new build is
+  // made, show the coordinate list instead. iOS uses Apple Maps (no key needed).
+  if (Platform.OS === "android") {
+    return (
+      <MapFallbackList
+        receivers={receivers}
+        notice="The interactive map view is temporarily unavailable on this device. Locations are listed above."
+      />
+    );
+  }
 
   const initialRegion =
     withLocation.length > 0
