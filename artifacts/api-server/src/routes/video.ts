@@ -597,9 +597,10 @@ router.post(
       // for the recipient's 45s call timeout. Mirrors the caregiver→recipient
       // direction in /video/initiate.
       //
-      // PHI hygiene (per replit.md): title/body are generic with NO names.
-      // The recipient name is forwarded in the `data` payload only, which is
-      // delivered to the app silently and not shown on a locked screen.
+      // Naming: the caregiver explicitly opted (July 2026) to show the care
+      // recipient's name on their own device's incoming-call notification for
+      // recognizability, accepting the lock-screen privacy tradeoff. This
+      // mirrors the caregiver→recipient direction ("Pat is calling").
       let pushSent = false;
       try {
         const caregiverDoc = await fetchUserDocAsCaller(auth.idToken, caregiverId);
@@ -609,8 +610,9 @@ router.post(
           } | null)?.fields?.expoPushToken?.stringValue ?? "";
 
         if (caregiverPushToken && caregiverPushToken.startsWith("ExponentPushToken")) {
-          const title = "Incoming Video Call";
-          const body = "Tap to answer";
+          const callerLabel = recipientName?.trim() || "Your care recipient";
+          const title = `${callerLabel} is calling`;
+          const body = `${callerLabel} needs you. Tap to answer.`;
           const pushResult = await sendPush([caregiverPushToken], title, body, {
             type: "incoming_call",
             initiatedBy: "recipient",
