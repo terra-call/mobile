@@ -464,20 +464,27 @@ export default function CameraStreamScreen() {
           ? event.error
           : event.error?.message ?? "unknown room error";
 
-      // A failure while a reconnect is already in progress (budget partially
-      // consumed) chains into the next backoff attempt rather than giving up
-      // after a single try — connectToRoom() returns before the rejoin's real
-      // outcome is known, so this is where a failed rejoin is observed.
+      // ANY connect failure with retry budget left — including the very FIRST
+      // attempt — chains into the next backoff attempt rather than giving up.
+      // Transient signaling failures (e.g. "Signaling connection error" from a
+      // brief network blip right as the camera activates) were previously
+      // terminal on the initial connect, showing "Video unavailable" for a
+      // hiccup that a 1–2s retry would have absorbed. connectToRoom() returns
+      // before the rejoin's real outcome is known, so this handler is also
+      // where a failed rejoin is observed and chained.
       if (
         !disconnectedRef.current &&
-        reconnectAttemptsRef.current > 0 &&
         reconnectAttemptsRef.current < MAX_RECONNECT_ATTEMPTS
       ) {
         if (user?.id) {
           logAudit({
             userId: user.id,
             action: "video_stream_disconnected",
-            details: `Reconnect attempt failed (${reason}) — retrying ${
+            details: `${
+              reconnectAttemptsRef.current === 0
+                ? "Initial connect failed"
+                : "Reconnect attempt failed"
+            } (${reason}) — retrying ${
               reconnectAttemptsRef.current + 1
             }/${MAX_RECONNECT_ATTEMPTS} (room=${roomName})`,
           });

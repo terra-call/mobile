@@ -57,6 +57,9 @@ flipped state to "not connected".
   `onRoomDidDisconnect` (the initial drop) and `onRoomDidFailToConnect` (a failed
   rejoin) — feeding both into one shared `scheduleReconnect`. Driving retries
   only from the disconnect handler yields just ONE real retry.
+- **The INITIAL connect failure must also retry** via the same bounded backoff —
+  a transient "Signaling connection error" right at camera activation was
+  previously terminal and showed "Video unavailable" for a momentary network blip.
 - Reset the reconnect attempt budget in `onRoomDidConnect` (success), and guard
   every reconnect path with a `disconnectedRef` flag set by both End Stream and
   the unmount cleanup, so a teardown disconnect can't reconnect/setState on an
