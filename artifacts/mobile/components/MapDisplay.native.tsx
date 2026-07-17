@@ -1,3 +1,4 @@
+import Constants from "expo-constants";
 import React from "react";
 import { Platform, StyleSheet } from "react-native";
 import MapView, { Marker } from "react-native-maps";
@@ -19,11 +20,15 @@ export function MapDisplay({ receivers }: MapDisplayProps) {
   const withLocation = receivers.filter((r) => r.location);
 
   // Android's map requires a Google Maps API key baked into the native build.
-  // No key is configured yet, and rendering MapView without one crashes the
-  // app natively ("Terra Call closed because this app has a bug"). Until a key
-  // is added to app.json (android.config.googleMaps.apiKey) and a new build is
-  // made, show the coordinate list instead. iOS uses Apple Maps (no key needed).
-  if (Platform.OS === "android") {
+  // app.config.js injects it (from GOOGLE_MAPS_ANDROID_API_KEY) and sets
+  // extra.androidMapsKeyConfigured accordingly. On a binary built WITHOUT the
+  // key, rendering MapView hard-crashes the app natively ("Terra Call closed
+  // because this app has a bug") — so gate on the flag and show the list
+  // fallback instead. iOS uses Apple Maps (no key needed).
+  const androidMapsKeyConfigured =
+    (Constants.expoConfig?.extra as { androidMapsKeyConfigured?: boolean } | undefined)
+      ?.androidMapsKeyConfigured === true;
+  if (Platform.OS === "android" && !androidMapsKeyConfigured) {
     return (
       <MapFallbackList
         receivers={receivers}

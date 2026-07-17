@@ -49,3 +49,4 @@ CNG (no committed android/ios). EAS runs `expo prebuild`, which adds a generated
 fingerprint never sees, so local and EAS fingerprints structurally cannot match.
 Confirmed across builds via both `EAS_NO_VCS=1` and a git-VCS temp workflow.
 **Do not retry fingerprint — use appVersion + manual bump.**
+- Publishing `eas update` for runtime 1.4.0+ requires GOOGLE_MAPS_ANDROID_API_KEY present in the publishing env (it is a Replit secret here) — app.config.js derives `extra.androidMapsKeyConfigured` at publish time; missing key silently reverts Android map to list fallback.
