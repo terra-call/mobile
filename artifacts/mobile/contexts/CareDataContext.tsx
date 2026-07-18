@@ -22,6 +22,7 @@ import {
 } from "@/services/notifications";
 import { logEvent } from "@/services/events";
 import { logAudit } from "@/services/audit";
+import { captureAndSaveLocation } from "@/services/location";
 import { useAuth } from "./AuthContext";
 
 export type ReceiverStatus = "checked-in" | "missed" | "emergency" | "unknown";
@@ -395,6 +396,11 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
     });
     notifiedRef.current = { missed: false, emergency: false };
 
+    // Best-effort location capture (user-approved: only at check-in /
+    // emergency, no background tracking). Fire-and-forget so a slow GPS fix
+    // never delays the check-in itself.
+    captureAndSaveLocation(user.id).catch(() => {});
+
     // Notify API server scheduler so it resets its counters too
     callNotifyApi("/api/notify/checkin", { userId: user.id, checkedInAt: now }).catch(() => {});
 
@@ -482,6 +488,10 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
 
     // Suppress local notification flags so we don't fire a missed alert too
     notifiedRef.current = { missed: true, emergency: true };
+
+    // Best-effort location capture so the caregiver map shows where the
+    // emergency was raised. Fire-and-forget — must never delay the alert.
+    captureAndSaveLocation(user.id).catch(() => {});
 
     // Log event for the admin dashboard
     logEvent(user.id, receiverName, "manual_emergency").catch(() => {});
