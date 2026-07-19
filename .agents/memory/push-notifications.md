@@ -37,6 +37,20 @@ rebuilding the APK; existing installs start receiving pushes immediately.
 - Without FCM creds, `registerForPushNotifications` can fail silently
   ("Default FirebaseApp is not initialized") and no token saves to Firestore.
 
+# FCM service-account project MUST match google-services.json project
+
+The FCM V1 key on EAS and the app's `google-services.json` must come from the
+SAME Firebase project, or Android pushes are silently rejected (server still
+sees ticket OK / pushSent=true). Org policy blocks key creation on the main
+project (`terra-call-9335b`), so a personal-Gmail project **terra-call-fcm**
+is used for push ONLY: its service-account key is on EAS AND its
+`google-services.json` is baked into the APK. Auth/Firestore
+still use terra-call-9335b via explicit EXPO_PUBLIC_FIREBASE_* config —
+`google-services.json` only affects FCM device registration.
+
+**How to apply:** never swap either half alone; a google-services.json change
+is a native change (bump `expo.version`, rebuild APK).
+
 # Cold-start taps need getLastNotificationResponseAsync (both directions)
 
 `addNotificationResponseReceivedListener` does NOT fire for the notification

@@ -1,13 +1,13 @@
 {
   "project_info": {
-    "project_number": "173877385922",
-    "project_id": "terra-call-9335b",
-    "storage_bucket": "terra-call-9335b.firebasestorage.app"
+    "project_number": "700624530117",
+    "project_id": "terra-call-fcm",
+    "storage_bucket": "terra-call-fcm.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:173877385922:android:ec7e13d8a721a84b5b795b",
+        "mobilesdk_app_id": "1:700624530117:android:ad735cd018058a4d719eac",
         "android_client_info": {
           "package_name": "com.terracall.mobile"
         }
@@ -15,7 +15,7 @@
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyCzNTFJjcXQvfNaf3ddIn6OzLkA-RJBZ54"
+          "current_key": "AIzaSyC-F2BkY2sXMyQG-nzGHvZvx-bzUvFXslc"
         }
       ],
       "services": {
