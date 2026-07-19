@@ -135,19 +135,49 @@ const DEMO_RECEIVERS: CareReceiver[] = [
   },
 ];
 
+// Compute WHEN the next check-in is due, given the last check-in time and the
+// configured schedule. Mirrors the server's computeNextDue: interval schedules
+// are lastCheckIn + N hours; "custom" is the next occurrence of the configured
+// daily time after the last check-in.
+export function computeDueTs(
+  lastCheckInTs: number,
+  scheduleType: string = "8h",
+  customHour: number = 9,
+  customMinute: number = 0
+): number {
+  if (scheduleType === "custom") {
+    const due = new Date(lastCheckInTs);
+    due.setHours(customHour, customMinute, 0, 0);
+    if (due.getTime() <= lastCheckInTs) due.setDate(due.getDate() + 1);
+    return due.getTime();
+  }
+  const hours =
+    scheduleType === "4h" ? 4 : scheduleType === "8h" ? 8 : scheduleType === "12h" ? 12 : 24;
+  return lastCheckInTs + hours * 3600 * 1000;
+}
+
+// Status is based on how OVERDUE the scheduled check-in is — NOT raw time since
+// the last check-in. The missed/escalation windows are grace periods measured
+// from the due time, matching the server scheduler's alert semantics. (A prior
+// version compared time-since-last-check-in directly against missedWindowMin,
+// which flagged "missed" 15 min after any check-in regardless of a 24h schedule.)
 function computeStatus(
   lastCheckIn: any,
   missedWindowMin: number = DEFAULT_MISSED_MIN,
-  escalationWindowMin: number = DEFAULT_ESCALATION_MIN
+  escalationWindowMin: number = DEFAULT_ESCALATION_MIN,
+  scheduleType: string = "8h",
+  customHour: number = 9,
+  customMinute: number = 0
 ): ReceiverStatus {
   if (!lastCheckIn) return "unknown";
   const ts =
     typeof lastCheckIn.toDate === "function"
       ? lastCheckIn.toDate().getTime()
       : new Date(lastCheckIn).getTime();
-  const diffMin = (Date.now() - ts) / 60000;
-  if (diffMin < missedWindowMin) return "checked-in";
-  if (diffMin < escalationWindowMin) return "missed";
+  const dueTs = computeDueTs(ts, scheduleType, customHour, customMinute);
+  const overdueMin = (Date.now() - dueTs) / 60000;
+  if (overdueMin < missedWindowMin) return "checked-in";
+  if (overdueMin < escalationWindowMin) return "missed";
   return "emergency";
 }
 
@@ -209,7 +239,14 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
             const status: ReceiverStatus =
               storedStatus === "emergency"
                 ? "emergency"
-                : computeStatus(data.lastCheckIn, missed, escalation);
+                : computeStatus(
+                    data.lastCheckIn,
+                    missed,
+                    escalation,
+                    (data.checkInScheduleType as string) ?? "8h",
+                    (data.checkInCustomHour as number) ?? 9,
+                    (data.checkInCustomMinute as number) ?? 0,
+                  );
             const ts = data.lastCheckIn;
             let lastCheckInStr: string | null = null;
             if (ts) {
@@ -302,8 +339,17 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
       const smsConsent = data.smsConsent ?? false;
       if (!notifEnabled) return;
 
+      // Alert windows are measured from when the check-in was DUE (last
+      // check-in + configured schedule), not from the last check-in itself —
+      // otherwise a 24h schedule would false-alarm 15 min after every check-in.
       const ts = new Date(lastCheckIn).getTime();
-      const diffMin = (Date.now() - ts) / 60000;
+      const dueTs = computeDueTs(
+        ts,
+        (data.checkInScheduleType as string) ?? "8h",
+        (data.checkInCustomHour as number) ?? 9,
+        (data.checkInCustomMinute as number) ?? 0,
+      );
+      const diffMin = (Date.now() - dueTs) / 60000;
 
       const caregivers = permittedCaregiversRef.current;
       const receiverName = user.name ?? "Your care recipient";
