@@ -75,6 +75,24 @@ launching response.
 - Caregiver incoming-call surfaces a modal (state), not navigation, so it needs
   no delay; only the recipient camera-stream NAVIGATION needs the settle delay.
 
+# Stale push tokens route pushes to the wrong physical device
+
+`users/<uid>.expoPushToken` is written by whichever device signs into the
+account. If tokens are never cleared, an account keeps pointing at the LAST
+device that signed in — so a recipient-targeted push ("X is checking on you")
+can land on the caregiver's phone if the recipient account was ever signed in
+there. All send-path routing can be role-correct while delivery is still wrong.
+
+**Why:** July 2026 — caregiver iPhone received the recipient's incoming-call
+push; recipient doc held the iPhone token from an earlier sign-in (tablet
+couldn't overwrite it while its FCM registration was broken).
+
+**How to apply:** logout deletes `expoPushToken` from the signing-out user's
+doc (must run BEFORE `signOut` while auth.uid is valid; non-fatal try/catch).
+Sign-in on the correct device self-heals by overwriting the token. Client
+listeners also carry defensive `receiverUid`/`caregiverUid` checks, but those
+can't stop the OS-level banner — token hygiene is the real fix.
+
 # PHI hygiene for push
 
 Lock-screen-visible title/body must be generic with NO names ("Incoming Call" /

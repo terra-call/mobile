@@ -5,7 +5,7 @@ import {
   signInWithEmailAndPassword,
   signOut,
 } from "firebase/auth";
-import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
+import { deleteField, doc, getDoc, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
 import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { auth, db, isFirebaseConfigured } from "@/services/firebase";
 import { logAudit } from "@/services/audit";
@@ -345,6 +345,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     setPendingRecovery(null);
     if (isFirebaseConfigured && auth) {
+      // PUSH TOKEN HYGIENE — remove this device's push token from the account
+      // being signed out. Without this, the account's user doc keeps pointing
+      // at THIS device, so pushes meant for that account (e.g. "X is checking
+      // on you" for a care recipient) get delivered to whoever uses this
+      // device next. Must run BEFORE signOut while request.auth.uid is valid.
+      if (user && db) {
+        try {
+          await updateDoc(doc(db, "users", user.id), { expoPushToken: deleteField() });
+        } catch {
+          // Non-fatal (offline etc.) — sign-out must never be blocked.
+        }
+      }
       await AsyncStorage.removeItem(SESSION_KEY);
       setUser(null);
       await signOut(auth);
