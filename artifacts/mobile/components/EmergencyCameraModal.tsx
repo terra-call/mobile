@@ -14,7 +14,7 @@
 // over whatever caregiver screen is active.
 
 import { Feather } from "@expo/vector-icons";
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Animated,
   Modal,
@@ -78,6 +78,16 @@ export function EmergencyCameraModal({
   const insets = useSafeAreaInsets();
   const fadeIn = useRef(new Animated.Value(0)).current;
   const pulse = useRef(new Animated.Value(1)).current;
+
+  // Collapse the home-camera section entirely when the recipient has no Home
+  // Camera set up — the modal then centers on the phone-camera action instead
+  // of showing a "not configured" panel. Reset per alert so a different
+  // recipient (who may have a camera) gets a fresh probe.
+  const [noHomeCamera, setNoHomeCamera] = useState(false);
+  const alertRecipientId = alert?.recipientId ?? null;
+  useEffect(() => {
+    setNoHomeCamera(false);
+  }, [alertRecipientId]);
 
   const topPad = Platform.OS === "web" ? 24 : insets.top;
   const bottomPad = Platform.OS === "web" ? 24 : insets.bottom;
@@ -148,19 +158,35 @@ export function EmergencyCameraModal({
           {/* Live home-camera feed — continuous polling only for genuine
               emergencies/escalations. A missed check-in shows a single frame
               with a manual Refresh (no ~1.5s loop) to keep bandwidth down. */}
-          <View style={styles.feedWrap}>
-            <HomeCameraFeed
-              targetUserId={alert.recipientId}
-              active={
-                alert.reason === "emergency" ||
-                alert.reason === "manual_emergency"
-              }
-            />
-            <View style={styles.liveTag}>
-              <View style={styles.liveDot} />
-              <Text style={styles.liveText}>HOME CAMERA</Text>
+          {noHomeCamera ? (
+            /* No home camera set up — instead of a "not configured" panel,
+               fill the space with a clear prompt steering the caregiver to the
+               phone camera below. */
+            <View style={styles.noCameraWrap}>
+              <Feather name="video" size={48} color="rgba(255,255,255,0.4)" />
+              <Text style={styles.noCameraTitle}>
+                Check on {alert.recipientName}
+              </Text>
+              <Text style={styles.noCameraSub}>
+                Connect to their phone camera below to see and talk to them.
+              </Text>
             </View>
-          </View>
+          ) : (
+            <View style={styles.feedWrap}>
+              <HomeCameraFeed
+                targetUserId={alert.recipientId}
+                active={
+                  alert.reason === "emergency" ||
+                  alert.reason === "manual_emergency"
+                }
+                onNotConfigured={() => setNoHomeCamera(true)}
+              />
+              <View style={styles.liveTag}>
+                <View style={styles.liveDot} />
+                <Text style={styles.liveText}>HOME CAMERA</Text>
+              </View>
+            </View>
+          )}
 
           {/* ONE-TAP PHONE CAMERA — bring up the recipient's front camera for
               two-way video. Kept as an explicit tap (not auto) so the Reolink
@@ -254,6 +280,31 @@ const styles = StyleSheet.create({
     backgroundColor: "#0a0e1c",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.08)",
+  },
+  noCameraWrap: {
+    flex: 1,
+    borderRadius: 20,
+    backgroundColor: "#0a0e1c",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+    paddingHorizontal: 28,
+  },
+  noCameraTitle: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: "#fff",
+    fontFamily: "Inter_700Bold",
+    textAlign: "center",
+  },
+  noCameraSub: {
+    fontSize: 15,
+    color: "rgba(255,255,255,0.6)",
+    fontFamily: "Inter_400Regular",
+    textAlign: "center",
+    lineHeight: 21,
   },
   liveTag: {
     position: "absolute",

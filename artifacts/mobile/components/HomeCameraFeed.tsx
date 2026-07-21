@@ -81,6 +81,7 @@ export function HomeCameraFeed({
   targetUserId,
   active,
   pausedForCall = false,
+  onNotConfigured,
 }: {
   targetUserId: string;
   /**
@@ -89,6 +90,12 @@ export function HomeCameraFeed({
    * manual Refresh control and never enters the poll loop.
    */
   active: boolean;
+  /**
+   * Fired once when the initial probe determines the recipient has no Home
+   * Camera set up (404). Lets parent screens collapse the home-camera section
+   * entirely instead of devoting layout space to the "not configured" panel.
+   */
+  onNotConfigured?: () => void;
   /**
    * Freeze the feed on its last good frame for the duration of a concurrent
    * Twilio phone-camera call. The poll loop is suspended (so the JPEG fetches
@@ -101,6 +108,12 @@ export function HomeCameraFeed({
 }) {
   const { user } = useAuth();
   const [phase, setPhase] = useState<Phase>("loading");
+  // Latest onNotConfigured callback — kept in a ref so the initial-probe effect
+  // doesn't need it in its dependency list (it must run once per target).
+  const onNotConfiguredRef = useRef(onNotConfigured);
+  useEffect(() => {
+    onNotConfiguredRef.current = onNotConfigured;
+  }, [onNotConfigured]);
   const [live, setLive] = useState(false);
   const activeRef = useRef(true);
 
@@ -231,6 +244,7 @@ export function HomeCameraFeed({
         if (cancelled || !activeRef.current) return;
         if (res.status === 404) {
           setPhase("not_configured");
+          onNotConfiguredRef.current?.();
           return;
         }
         // Feed the first frame through the double-buffer; the Image's onLoad

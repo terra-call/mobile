@@ -641,7 +641,17 @@ export default function CameraStreamScreen() {
   // DUAL-FEED — when a caregiver is viewing a recipient, show the recipient's
   // Reolink "Home Camera" alongside the Twilio "Phone Camera". Only the caregiver
   // (mode=view) with a known receiverId can pull the proxied snapshot feed.
-  const showHomeCamera = mode === "view" && !!receiverId;
+  // Collapse the home-camera half entirely when the recipient has no Home
+  // Camera set up — the phone camera then gets the full screen instead of
+  // sharing it with a permanent "not configured" panel.
+  const [homeCamNotConfigured, setHomeCamNotConfigured] = useState(false);
+  // Reset when the viewed recipient changes — a different recipient may have a
+  // camera configured, so they get a fresh probe rather than inheriting the
+  // previous recipient's collapsed state.
+  useEffect(() => {
+    setHomeCamNotConfigured(false);
+  }, [receiverId]);
+  const showHomeCamera = mode === "view" && !!receiverId && !homeCamNotConfigured;
 
   // BANDWIDTH CONTENTION — while the Twilio phone-camera call is connecting or
   // live on THIS device, freeze the home (Reolink) feed instead of polling it.
@@ -768,6 +778,7 @@ export default function CameraStreamScreen() {
             targetUserId={receiverId}
             active={roomName.startsWith("tc-emrg")}
             pausedForCall={phoneCameraActive}
+            onNotConfigured={() => setHomeCamNotConfigured(true)}
           />
         </View>
       )}
