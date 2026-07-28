@@ -23,6 +23,7 @@ export type AuditAction =
   | "login"
   | "logout"
   | "account_created"
+  | "account_deleted"
   | "checkin"
   | "alert_missed"
   | "alert_emergency"

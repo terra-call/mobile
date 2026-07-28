@@ -102,6 +102,14 @@ export function getSchedule(userId: string): ScheduleEntry | undefined {
   return schedules.get(userId);
 }
 
+// Remove a user's schedule entirely — used when an account is deleted so the
+// scheduler stops processing (and alerting on) a user that no longer exists.
+export function removeSchedule(userId: string): boolean {
+  const existed = schedules.delete(userId);
+  if (existed) logger.info({ userId }, "Schedule removed (account deleted)");
+  return existed;
+}
+
 // ── Send an immediate emergency alert (push + SMS) atomically ─────────────────
 
 export async function sendEmergencyAlert(

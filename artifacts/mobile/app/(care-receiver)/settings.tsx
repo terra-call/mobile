@@ -54,7 +54,7 @@ interface PermittedCaregiver {
 }
 
 export default function SettingsScreen() {
-  const { user } = useAuth();
+  const { user, deleteAccount } = useAuth();
   const colors = useColors();
   const insets = useSafeAreaInsets();
 
@@ -416,6 +416,54 @@ export default function SettingsScreen() {
         },
       ]
     );
+  };
+
+  // ── Delete account (App Store / Play Store requirement) ───────────────────
+  const [deletePassword, setDeletePassword] = useState("");
+  const [showDeletePass, setShowDeletePass] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const performDelete = async () => {
+    setDeleting(true);
+    try {
+      await deleteAccount(deletePassword);
+      // Success — AuthContext clears the user; router guards return to login.
+    } catch (err: unknown) {
+      const code = (err as { code?: string })?.code ?? "";
+      let msg = "Could not delete your account. Please try again.";
+      if (code === "auth/wrong-password" || code === "auth/invalid-credential") {
+        msg = "Incorrect password.";
+      } else if (code === "auth/too-many-requests") {
+        msg = "Too many attempts. Please wait a few minutes and try again.";
+      } else if (code === "terra/scrub-failed") {
+        msg = "Could not remove your data. Check your internet connection and try again — your account has NOT been deleted.";
+      } else if (code === "auth/requires-recent-login") {
+        msg = "For security, please log out, log back in, and try deleting your account again.";
+      } else if (code === "auth/network-request-failed") {
+        msg = "No internet connection. Please try again when you're back online.";
+      }
+      Alert.alert("Error", msg);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleDeleteAccount = () => {
+    if (!deletePassword) {
+      Alert.alert("Password Required", "Enter your password to confirm account deletion.");
+      return;
+    }
+    const warning =
+      "This permanently deletes your Terra Call account. Your caregivers will no longer receive your check-ins or alerts. This cannot be undone.";
+    if (Platform.OS === "web") {
+      const ok = typeof window !== "undefined" ? window.confirm(warning) : false;
+      if (ok) performDelete();
+      return;
+    }
+    Alert.alert("Delete Account?", warning, [
+      { text: "Cancel", style: "cancel" },
+      { text: "Delete Forever", style: "destructive", onPress: performDelete },
+    ]);
   };
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -807,6 +855,42 @@ export default function SettingsScreen() {
             Ask your caregiver to generate an invite code in their app and share it with you.
           </Text>
         </Section>
+
+        {/* ── Danger Zone — Delete Account ── */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, { color: "#FF6B6B" }]}>DELETE ACCOUNT</Text>
+          <View style={[styles.sectionCard, { backgroundColor: colors.card, borderColor: "#FF3B3044" }]}>
+            <Text style={[styles.sectionNote, { color: colors.mutedForeground }]}>
+              Permanently delete your account. Your caregivers will no longer receive your check-ins or alerts. This cannot be undone.
+            </Text>
+            <Field label="Confirm your password" colors={colors}>
+              <View style={styles.passwordRow}>
+                <TextInput
+                  style={[styles.input, styles.passwordInput, { backgroundColor: colors.card, borderColor: colors.border, color: colors.text }]}
+                  value={deletePassword}
+                  onChangeText={setDeletePassword}
+                  placeholder="Your password"
+                  placeholderTextColor={colors.mutedForeground}
+                  secureTextEntry={!showDeletePass}
+                  autoCapitalize="none"
+                />
+                <Pressable
+                  onPress={() => setShowDeletePass((v) => !v)}
+                  style={[styles.eyeBtn, { backgroundColor: colors.card, borderColor: colors.border }]}
+                >
+                  <Feather name={showDeletePass ? "eye-off" : "eye"} size={18} color={colors.mutedForeground} />
+                </Pressable>
+              </View>
+            </Field>
+            <SaveButton
+              label="Delete My Account"
+              loading={deleting}
+              onPress={handleDeleteAccount}
+              color="#FF3B30"
+              textColor="#fff"
+            />
+          </View>
+        </View>
       </ScrollView>
     </KeyboardAvoidingView>
   );

@@ -51,7 +51,7 @@ interface LinkedReceiver {
 }
 
 export default function CaregiverSettingsScreen() {
-  const { user, logout } = useAuth();
+  const { user, logout, deleteAccount } = useAuth();
   const colors = useColors();
   const insets = useSafeAreaInsets();
 
@@ -339,6 +339,54 @@ export default function CaregiverSettingsScreen() {
     } finally {
       setCredSaving(false);
     }
+  };
+
+  // ── Delete account (App Store / Play Store requirement) ────────────────────
+  const [deletePassword, setDeletePassword] = useState("");
+  const [showDeletePass, setShowDeletePass] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const performDelete = async () => {
+    setDeleting(true);
+    try {
+      await deleteAccount(deletePassword);
+      // Success — AuthContext clears the user; router guards return to login.
+    } catch (err: unknown) {
+      const code = (err as { code?: string })?.code ?? "";
+      let msg = "Could not delete your account. Please try again.";
+      if (code === "auth/wrong-password" || code === "auth/invalid-credential") {
+        msg = "Incorrect password.";
+      } else if (code === "auth/too-many-requests") {
+        msg = "Too many attempts. Please wait a few minutes and try again.";
+      } else if (code === "terra/scrub-failed") {
+        msg = "Could not remove your data. Check your internet connection and try again — your account has NOT been deleted.";
+      } else if (code === "auth/requires-recent-login") {
+        msg = "For security, please log out, log back in, and try deleting your account again.";
+      } else if (code === "auth/network-request-failed") {
+        msg = "No internet connection. Please try again when you're back online.";
+      }
+      Alert.alert("Error", msg);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleDeleteAccount = () => {
+    if (!deletePassword) {
+      Alert.alert("Password Required", "Enter your password to confirm account deletion.");
+      return;
+    }
+    const warning =
+      "This permanently deletes your Terra Call account and profile. Your care recipients will no longer be monitored by you. This cannot be undone.";
+    if (Platform.OS === "web") {
+      const ok = typeof window !== "undefined" ? window.confirm(warning) : false;
+      if (ok) performDelete();
+      return;
+    }
+    Alert.alert("Delete Account?", warning, [
+      { text: "Cancel", style: "cancel" },
+      { text: "Delete Forever", style: "destructive", onPress: performDelete },
+    ]);
   };
 
   const handleLogout = () => {
@@ -637,6 +685,34 @@ export default function CaregiverSettingsScreen() {
               <Feather name="log-out" size={18} color={colors.destructive} />
               <Text style={[styles.logoutText, { color: colors.destructive }]}>Log Out</Text>
             </Pressable>
+          </View>
+        </View>
+
+        {/* ── Danger Zone — Delete Account ── */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionLabel, { color: "#FF6B6B" }]}>DELETE ACCOUNT</Text>
+          <View style={[styles.card, { backgroundColor: colors.card, borderColor: "#FF3B3044" }]}>
+            <Text style={[styles.sectionNote, { color: colors.mutedForeground }]}>
+              Permanently delete your account and profile. Your care recipients will no longer be monitored by you. This cannot be undone.
+            </Text>
+            <View style={styles.field}>
+              <Text style={[styles.fieldLabel, { color: colors.mutedForeground }]}>Confirm your password</Text>
+              <PasswordField
+                value={deletePassword}
+                onChange={setDeletePassword}
+                show={showDeletePass}
+                onToggle={() => setShowDeletePass((v) => !v)}
+                placeholder="Your password"
+                colors={colors}
+              />
+            </View>
+            <ActionButton
+              label="Delete My Account"
+              loading={deleting}
+              onPress={handleDeleteAccount}
+              bg="#FF3B30"
+              fg="#fff"
+            />
           </View>
         </View>
       </ScrollView>

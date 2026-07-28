@@ -56,9 +56,9 @@ caregiver,elderly,check in,senior safety,emergency alert,aging,care,welfare chec
 - Support URL: https://terra-call.com
 
 ## Reviewer notes (App Review Information — IMPORTANT)
-Provide TWO demo accounts (Apple requires working credentials):
-- Caregiver demo account: email + password
-- Care recipient demo account: email + password (linked to the caregiver above)
+Provide TWO demo accounts (Apple requires working credentials) — these are live and linked:
+- Caregiver demo account: `review.caregiver@terra-call.com` / `AppleReview2026!Cg`
+- Care recipient demo account: `review.recipient@terra-call.com` / `AppleReview2026!Cr` (linked to the caregiver above)
 Suggested note text:
 "Terra Call links care recipients with caregivers. Log in as the care recipient to
 see the check-in screen; log in as the caregiver (second device or simulator) to see

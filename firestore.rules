@@ -48,8 +48,20 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if isSignedIn();   // caregivers need to look up their receivers
       allow create: if isSelf(userId);
-      allow update: if isSelf(userId) || isAdmin();
-      allow delete: if isAdmin();
+      allow update: if isSelf(userId) || isAdmin()
+        // Caregiver self-removal: a caregiver deleting their own account may
+        // remove ONLY themselves from a recipient's caregiver link arrays.
+        // The update may touch nothing but the two link fields, and the
+        // resulting ID list must equal the old list minus the caller's uid.
+        || (isSignedIn()
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['permittedCaregiverIds', 'permittedCaregivers'])
+            && request.auth.uid in resource.data.permittedCaregiverIds
+            && request.resource.data.permittedCaregiverIds
+                 == resource.data.permittedCaregiverIds.removeAll([request.auth.uid]));
+      // Self-delete supports the App Store / Play Store account-deletion
+      // requirement (the app scrubs PHI first, then deletes the doc).
+      allow delete: if isSelf(userId) || isAdmin();
     }
 
     // ── EXISTING — invites ───────────────────────────────────────────────

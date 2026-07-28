@@ -1,14 +1,31 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   createUserWithEmailAndPassword,
+  deleteUser,
+  EmailAuthProvider,
   onAuthStateChanged,
+  reauthenticateWithCredential,
   signInWithEmailAndPassword,
   signOut,
 } from "firebase/auth";
-import { deleteField, doc, getDoc, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
+import {
+  arrayRemove,
+  collection,
+  deleteDoc,
+  deleteField,
+  doc,
+  getDoc,
+  getDocs,
+  query,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+  where,
+} from "firebase/firestore";
 import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { auth, db, isFirebaseConfigured } from "@/services/firebase";
 import { logAudit } from "@/services/audit";
+import { callNotifyApi } from "@/services/notifications";
 
 export type UserRole = "care-receiver" | "caregiver" | "family" | "admin";
 
@@ -50,6 +67,12 @@ interface AuthContextValue {
   register: (data: RegisterData) => Promise<void>;
   recoverProfile: (data: { name: string; role: UserRole; phone?: string }) => Promise<void>;
   logout: () => Promise<void>;
+  /**
+   * Permanently delete the signed-in user's account (App Store / Play Store
+   * account-deletion requirement). Re-authenticates with the given password,
+   * scrubs the Firestore profile of PHI, then deletes the Firebase Auth user.
+   */
+  deleteAccount: (currentPassword: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -366,8 +389,104 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [user]);
 
+  const deleteAccount = useCallback(async (currentPassword: string) => {
+    if (!isFirebaseConfigured || !auth?.currentUser || !user) {
+      throw Object.assign(new Error("not-signed-in"), { code: "terra/not-signed-in" });
+    }
+    const fbUser = auth.currentUser;
+
+    // 1) Re-authenticate — Firebase requires a recent login before deleteUser,
+    //    and this doubles as the "are you sure it's you" confirmation.
+    const credential = EmailAuthProvider.credential(user.email, currentPassword);
+    await reauthenticateWithCredential(fbUser, credential);
+
+    // 2) HIPAA audit — record BEFORE the auth user disappears so
+    //    request.auth.uid is still valid for the rules check.
+    await logAudit({
+      userId: user.id,
+      action: "account_deleted",
+      details: `User permanently deleted their own account (role=${user.role})`,
+    }).catch(() => {});
+
+    // 3) Scrub the Firestore profile. Firestore rules may not allow a
+    //    self-delete of the user doc (delete is admin-only in older deployed
+    //    rules), but self-UPDATE is always allowed — so first overwrite the
+    //    doc to remove all PHI (name, phone, location, camera credentials,
+    //    caregiver links, push token), then best-effort delete the document.
+    //    The scrub MUST succeed before we delete the auth user; otherwise a
+    //    PHI-bearing doc could be orphaned with no owner able to remove it.
+    if (db) {
+      try {
+        await setDoc(doc(db, "users", user.id), {
+          deleted: true,
+          deletedAt: serverTimestamp(),
+          role: "deleted",
+        });
+      } catch {
+        throw Object.assign(
+          new Error("Could not remove your data. Check your connection and try again — your account has NOT been deleted."),
+          { code: "terra/scrub-failed" }
+        );
+      }
+
+      // 3b) Cascade — a caregiver's name/email is stored on each linked
+      //     recipient's doc; remove those references so no PHI outlives the
+      //     account. Best-effort per doc (rules allow caregiver self-removal).
+      if (user.role === "caregiver" || user.role === "family" || user.role === "admin") {
+        try {
+          const snap = await getDocs(
+            query(collection(db, "users"), where("permittedCaregiverIds", "array-contains", user.id))
+          );
+          await Promise.all(
+            snap.docs.map(async (d) => {
+              const entries = (d.data().permittedCaregivers ?? []) as Array<{ id: string }>;
+              const mine = entries.filter((e) => e?.id === user.id);
+              const payload: Record<string, unknown> = {
+                permittedCaregiverIds: arrayRemove(user.id),
+              };
+              if (mine.length) payload.permittedCaregivers = arrayRemove(...mine);
+              await updateDoc(doc(db!, "users", d.id), payload).catch(() => {});
+            })
+          );
+        } catch {
+          // Query denied or offline — non-fatal; recipient-side entries point
+          // at a now-deleted account and are ignored by permission checks.
+        }
+      }
+
+      // 3c) Best-effort delete of the (already-scrubbed) tombstone doc.
+      try {
+        await deleteDoc(doc(db, "users", user.id));
+      } catch {
+        // Expected when deployed rules only allow admin deletes — the scrubbed
+        // tombstone above already removed all PHI.
+      }
+    }
+
+    // 3d) Care recipients: stop the server-side check-in scheduler so it
+    //     doesn't keep alerting caregivers about a deleted account.
+    if (user.role === "care-receiver") {
+      callNotifyApi("/api/notify/schedule/remove", { userId: user.id }).catch(() => {});
+    }
+
+    // 4) Delete the Firebase Auth user — the account can never sign in again.
+    await deleteUser(fbUser);
+
+    // 5) Local cleanup.
+    try {
+      await AsyncStorage.removeItem(SESSION_KEY);
+      const cache = await readProfileCache();
+      delete cache[user.id];
+      await AsyncStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(cache));
+    } catch {
+      // non-fatal
+    }
+    setPendingRecovery(null);
+    setUser(null);
+  }, [user]);
+
   return (
-    <AuthContext.Provider value={{ user, loading, pendingRecovery, login, register, recoverProfile, logout }}>
+    <AuthContext.Provider value={{ user, loading, pendingRecovery, login, register, recoverProfile, logout, deleteAccount }}>
       {children}
     </AuthContext.Provider>
   );

@@ -3,6 +3,7 @@ import {
   registerSchedule,
   recordCheckIn,
   getSchedule,
+  removeSchedule,
   sendDirectSms,
   sendEmergencyAlert,
 } from "../lib/notificationScheduler";
@@ -178,6 +179,17 @@ router.post("/notify/schedule", (req, res) => {
   });
 
   res.json({ ok: true });
+});
+
+// ── Remove a schedule (account deletion) ─────────────────────────────────────
+router.post("/notify/schedule/remove", (req, res) => {
+  const { userId } = req.body as { userId: string };
+  if (!userId) {
+    res.status(400).json({ error: "userId is required" });
+    return;
+  }
+  const removed = removeSchedule(userId);
+  res.json({ ok: true, removed });
 });
 
 // ── Record a check-in event (resets missed/escalation counters) ───────────────

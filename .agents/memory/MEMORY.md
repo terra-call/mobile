@@ -14,4 +14,5 @@
 - [Notification sound + Android channels](notification-sound-channels.md) — custom sound = native build (bundle .wav via plugin); Android LOCKS a channel after 1st create (bump id to change); iOS DND-override needs Apple critical-alerts entitlement.
 - [Android maps crash](android-maps-crash.md) — MapView w/o Google Maps API key hard-crashes Android natively; Android guarded to list fallback; key needs native build, not OTA.
 - [terra-call.com website](terra-call-website.md) — public site is EXTERNAL (Vibe+Cloudflare), not in repo; verify deploys by JS bundle hash (not last-modified); purge Cloudflare; Twilio A2P needs no-JS business info + matching CTA + privacy "never shared/sold" phrase.
+- [Account deletion](account-deletion.md) — scrub-before-deleteUser rule; live Firestore rules need self-delete + caregiver self-removal clauses published; demo review accounts exist.
 - [Location capture policy](location-capture-policy.md) — recipient location captured ONLY on check-in/emergency (user-approved), fire-and-forget; broad users read rule is a known follow-up.
