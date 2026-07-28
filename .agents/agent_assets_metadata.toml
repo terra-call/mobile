@@ -11,3 +11,9 @@ id = "D4xjPSJM3astvnvGQ4998"
 uri = "file://attached_assets/generated_audio/sound_effect_terra_call_alert.mp3"
 type = "audio"
 title = "terra_call_alert"
+
+[[outputs]]
+id = "655bcsK13T3cRbBkq2cr_"
+uri = "file://attached_assets/terra-call-feature-summary.pdf"
+type = "pdf"
+title = "Terra Call — Feature Summary"
