@@ -17,3 +17,9 @@ id = "655bcsK13T3cRbBkq2cr_"
 uri = "file://attached_assets/terra-call-feature-summary.pdf"
 type = "pdf"
 title = "Terra Call — Feature Summary"
+
+[[outputs]]
+id = "Y-k8k5GwlOW1s9SYMOsRe"
+uri = "file://attached_assets/store-submission/demo-accounts-for-review.pdf"
+type = "pdf"
+title = "Demo Accounts for App Review (PDF)"
