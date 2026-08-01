@@ -23,3 +23,66 @@ id = "Y-k8k5GwlOW1s9SYMOsRe"
 uri = "file://attached_assets/store-submission/demo-accounts-for-review.pdf"
 type = "pdf"
 title = "Demo Accounts for App Review (PDF)"
+
+[[outputs]]
+id = "iQaLR6SajCgLFTjAQ8sKE"
+uri = "file://attached_assets/store-submission/screenshots/01-login.png"
+type = "image"
+title = "Screenshot 1 — Login"
+description = "Terra Call login screen — phone-sized capture for the Play Store listing."
+
+[[outputs]]
+id = "1O0edmGJz4DdAwKKjpWfO"
+uri = "file://attached_assets/store-submission/screenshots/02-caregiver-dashboard.png"
+type = "image"
+title = "Screenshot 2 — Caregiver Dashboard"
+description = "Caregiver dashboard showing linked recipient status counts and call button."
+
+[[outputs]]
+id = "7p6huaLsdZyNXdpcPTtne"
+uri = "file://attached_assets/store-submission/screenshots/04-recipient-checkin.png"
+type = "image"
+title = "Screenshot 3 — I'M OK Check-In"
+description = "Care recipient home screen with the one-tap I'M OK check-in button."
+
+[[outputs]]
+id = "Zzhw_NSTE3BlWvEfe8fVg"
+uri = "file://attached_assets/store-submission/screenshots/7in-01-login.png"
+type = "image"
+title = "7-inch tablet — Login"
+description = "1080x1920 (9:16) tablet screenshot for Google Play."
+
+[[outputs]]
+id = "rutOqqJBb5IsNUvyZWvCL"
+uri = "file://attached_assets/store-submission/screenshots/7in-02-caregiver-dashboard.png"
+type = "image"
+title = "7-inch tablet — Caregiver Dashboard"
+description = "1080x1920 (9:16) tablet screenshot for Google Play."
+
+[[outputs]]
+id = "5zubluJKYde9_a1Qf2nf5"
+uri = "file://attached_assets/store-submission/screenshots/7in-03-recipient-checkin.png"
+type = "image"
+title = "7-inch tablet — I'M OK Check-In"
+description = "1080x1920 (9:16) tablet screenshot for Google Play."
+
+[[outputs]]
+id = "sOl3xUHbuYx_5fISyjlN3"
+uri = "file://attached_assets/store-submission/screenshots/10in-01-login.png"
+type = "image"
+title = "10-inch tablet — Login"
+description = "1440x2560 (9:16) tablet screenshot for Google Play."
+
+[[outputs]]
+id = "Qbikz_qTA-ZLBZyAeoqTK"
+uri = "file://attached_assets/store-submission/screenshots/10in-02-caregiver-dashboard.png"
+type = "image"
+title = "10-inch tablet — Caregiver Dashboard"
+description = "1440x2560 (9:16) tablet screenshot for Google Play."
+
+[[outputs]]
+id = "1SQW17dBYtQp8NU_G3aAs"
+uri = "file://attached_assets/store-submission/screenshots/10in-03-recipient-checkin.png"
+type = "image"
+title = "10-inch tablet — I'M OK Check-In"
+description = "1440x2560 (9:16) tablet screenshot for Google Play."
