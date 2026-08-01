@@ -291,14 +291,33 @@ export function CareDataProvider({ children }: { children: React.ReactNode }) {
               recentAlerts,
               lastEmergencyAt,
               hasHomeCamera: !!(data.reolink && data.reolink.host),
-              permittedCaregiverIds: Array.isArray(data.permittedCaregivers)
-                ? (data.permittedCaregivers as Array<{ id?: string }>)
-                    .map((c) => c?.id)
-                    .filter((id): id is string => typeof id === "string")
-                : [],
+              permittedCaregiverIds: [
+                ...new Set([
+                  ...(Array.isArray(data.permittedCaregivers)
+                    ? (data.permittedCaregivers as Array<{ id?: string }>)
+                        .map((c) => c?.id)
+                        .filter((id): id is string => typeof id === "string")
+                    : []),
+                  ...(Array.isArray(data.permittedCaregiverIds)
+                    ? (data.permittedCaregiverIds as unknown[]).filter(
+                        (id): id is string => typeof id === "string",
+                      )
+                    : []),
+                ]),
+              ],
             };
           });
-          setCareReceivers(liveReceivers);
+          // PRIVACY — caregivers may only see recipients who explicitly
+          // granted them access (permittedCaregiverIds). Only admins see
+          // the full list. Without this gate, every caregiver account
+          // would see every care recipient in the system.
+          const visibleReceivers =
+            user.role === "admin"
+              ? liveReceivers
+              : liveReceivers.filter((r) =>
+                  r.permittedCaregiverIds.includes(user.id),
+                );
+          setCareReceivers(visibleReceivers);
           setLoading(false);
         });
         return unsubscribe;

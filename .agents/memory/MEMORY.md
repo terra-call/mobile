@@ -4,7 +4,7 @@
 - [Twilio Video reconnect + Reolink contention](twilio-video-reconnect.md) — viewer-side remote hangup = onRoomParticipantDidDisconnect (not onRoomDidDisconnect); connect() returns before rejoin outcome so chain retries via onRoomDidFailToConnect; gentle home-cam poll avoids WebRTC starvation.
 - [Async poll-loop cancellation](async-poll-loop-cancellation.md) — async self-rescheduling setTimeout loops need an effect-local `cancelled` flag; `clearTimeout` + mount-flag alone don't stop them.
 - [EAS runtime policy + native placeholders](eas-runtime-policy-and-native-placeholders.md) — appVersion policy lets OTA JS drift onto a mismatched native binary; camera-stream "Run an EAS dev build" placeholder == SDK require() failed, not a creds/room issue; Video needs API Key secrets.
-- [Caregiver data scoping](caregiver-data-scoping.md) — caregiver care-receiver list is unfiltered client-side; any new caregiver PHI surface must self-gate on `permittedCaregiverIds`.
+- [Caregiver data scoping](caregiver-data-scoping.md) — dashboard list now self-gates on `permittedCaregiverIds` (admins see all), but the query/read rule stay broad; new PHI surfaces must still self-gate.
 - [pnpm overrides](pnpm-overrides.md) — patch vulnerable transitive deps via overrides; caret jumps past parent's range so pin exact when parent uses `~x.y`; re-grep lockfile after install.
 - [Alert feed clearing](alert-feed-clearing.md) — caregiver "clear" is a per-viewer alertsClearedAt watermark on their OWN doc; never delete shared recentAlerts on recipient docs.
 - [Caregiver alert history](caregiver-alert-history.md) — per-press alerts live on recipient user doc (events is admin-only); atomic append via runTransaction; emergency time uses lastEmergencyAt.
