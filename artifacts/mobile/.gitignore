@@ -39,3 +39,5 @@ yarn-error.*
 .vercel
 
 .env
+credentials.json
+credentials/

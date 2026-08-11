@@ -15,6 +15,35 @@ args = ["pnpm", "store", "prune"]
 env = { "CI" = "true" }
 
 [workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "EAS iOS Build"
+
+[[workflows.workflow]]
+name = "EAS iOS Build"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = """
+cd artifacts/mobile && printf '%s' \"$ASC_API_KEY_P8\" > /tmp/asc_key.p8 && cp eas.json /tmp/eas.json.bak && node -e '
+const fs=require(\"fs\");
+const c=JSON.parse(fs.readFileSync(\"eas.json\",\"utf8\"));
+c.submit=c.submit||{};
+c.submit.production=c.submit.production||{};
+c.submit.production.ios={ascApiKeyPath:\"/tmp/asc_key.p8\",ascApiKeyId:process.env.ASC_API_KEY_ID,ascApiKeyIssuerId:process.env.ASC_API_ISSUER_ID,appleTeamId:\"ZGCT2ZHDY2\"};
+fs.writeFileSync(\"eas.json\",JSON.stringify(c,null,2));
+' && CI=1 EXPO_ASC_API_KEY_PATH=/tmp/asc_key.p8 EXPO_ASC_KEY_ID=\"$ASC_API_KEY_ID\" EXPO_ASC_ISSUER_ID=\"$ASC_API_ISSUER_ID\" EXPO_APPLE_TEAM_ID=ZGCT2ZHDY2 EXPO_APPLE_TEAM_TYPE=INDIVIDUAL npx eas-cli@latest build --platform ios --profile production --non-interactive --no-wait --refresh-distribution-certificate; s=$?; cp /tmp/eas.json.bak eas.json; exit $s"""
 
 [agent]
 stack = "PNPM_WORKSPACE"

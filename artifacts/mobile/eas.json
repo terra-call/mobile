@@ -37,7 +37,8 @@
       "channel": "production",
       "env": {
         "EXPO_PUBLIC_API_URL": "https://caregiver-connect-terracall.replit.app"
-      }
+      },
+      "credentialsSource": "local"
     }
   },
   "submit": {

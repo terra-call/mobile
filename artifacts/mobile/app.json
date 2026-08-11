@@ -15,7 +15,7 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.terracall.mobile",
+      "bundleIdentifier": "com.terracall.app",
       "buildNumber": "1",
       "infoPlist": {
         "NSCameraUsageDescription": "Terra Call uses your camera so a trusted caregiver can see you during an emergency check-in. The camera only activates after you give consent and only when a caregiver initiates an emergency call.",
