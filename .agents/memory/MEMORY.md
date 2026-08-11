@@ -1,3 +1,4 @@
+- [iOS EAS local credentials](ios-eas-local-credentials.md) — first dist cert can't be made non-interactively; sign via ASC API + local credentials; iOS bundle id is com.terracall.app (mobile taken); profile needs push capability.
 - [Push notifications](push-notifications.md) — wakeups needed for both call directions (Firestore listeners pause in bg); Android APK needs FCM creds on EAS; PHI-safe push bodies.
 - [EAS Update / OTA](eas-update-and-builds.md) — run `eas update` via a temp workflow (not bash bg); use `--branch` + `CI=1`; tablet is `preview` channel, runtime 1.0.0 appVersion.
 - [Reolink pseudo-live feed](reolink-pseudo-live-feed.md) — "live" home cam is serial JPEG snapshot polling; loop must be self-paced w/ frameId identity; server fast-fails on timeout; port-forward is intermittent.
