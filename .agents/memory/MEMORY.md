@@ -18,3 +18,4 @@
 - [Account deletion](account-deletion.md) — scrub-before-deleteUser rule; live Firestore rules need self-delete + caregiver self-removal clauses published; demo review accounts exist.
 - [Play foreground-service permissions](play-foreground-permissions.md) — Twilio SDK injects unused media-projection/playback perms; blockedPermissions in app.json + new AAB, don't declare them.
 - [Location capture policy](location-capture-policy.md) — recipient location captured ONLY on check-in/emergency (user-approved), fire-and-forget; broad users read rule is a known follow-up.
+- [App Store rejection resubmission](app-store-resubmission.md) — resolve the rejected item, then resubmit its original unresolved submission; a new submission cannot claim the held version.
