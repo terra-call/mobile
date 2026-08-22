@@ -47,3 +47,6 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Large App Review recordings are uploaded directly to App Store Connect.
+attached_assets/*ScreenRecording*.MP4
