@@ -22,7 +22,7 @@ import {
   updateDoc,
   where,
 } from "firebase/firestore";
-import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { auth, db, isFirebaseConfigured } from "@/services/firebase";
 import { logAudit } from "@/services/audit";
 import { callNotifyApi } from "@/services/notifications";
@@ -105,11 +105,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [pendingRecovery, setPendingRecovery] = useState<PendingRecovery | null>(null);
+  const authTransitionIdRef = useRef(0);
 
   // Restore session on app launch via onAuthStateChanged
   useEffect(() => {
     if (isFirebaseConfigured && auth) {
       const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+        const authTransitionId = ++authTransitionIdRef.current;
         if (firebaseUser) {
           // Try Firestore first
           if (db) {
@@ -131,6 +133,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                   phone: data.phone ?? undefined,
                 };
                 await writeProfileCache(firebaseUser.uid, userData);
+                if (
+                  authTransitionId !== authTransitionIdRef.current ||
+                  auth?.currentUser?.uid !== firebaseUser.uid
+                ) {
+                  return;
+                }
                 setUser(userData);
                 setLoading(false);
                 return;
@@ -142,6 +150,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
           // Try the persistent profile cache
           const cache = await readProfileCache();
+          if (
+            authTransitionId !== authTransitionIdRef.current ||
+            auth?.currentUser?.uid !== firebaseUser.uid
+          ) {
+            return;
+          }
           const cachedUser = cache[firebaseUser.uid];
           if (cachedUser) {
             setUser(cachedUser);
@@ -366,26 +380,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }).catch(() => {});
     }
 
+    // Invalidate any in-flight onAuthStateChanged profile read. Without this,
+    // a slow read that began before logout can restore the user after sign-out.
+    authTransitionIdRef.current += 1;
     setPendingRecovery(null);
+    setUser(null);
+    await AsyncStorage.removeItem(SESSION_KEY).catch(() => {});
+
     if (isFirebaseConfigured && auth) {
       // PUSH TOKEN HYGIENE — remove this device's push token from the account
       // being signed out. Without this, the account's user doc keeps pointing
       // at THIS device, so pushes meant for that account (e.g. "X is checking
       // on you" for a care recipient) get delivered to whoever uses this
-      // device next. Must run BEFORE signOut while request.auth.uid is valid.
+      // device next. Give this authenticated cleanup a brief chance to finish,
+      // but never let an offline Firestore write block the user from signing out.
       if (user && db) {
-        try {
-          await updateDoc(doc(db, "users", user.id), { expoPushToken: deleteField() });
-        } catch {
-          // Non-fatal (offline etc.) — sign-out must never be blocked.
-        }
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([
+          updateDoc(doc(db, "users", user.id), { expoPushToken: deleteField() }).catch(() => {}),
+          new Promise<void>((resolve) => {
+            timeout = setTimeout(resolve, 1200);
+          }),
+        ]);
+        if (timeout) clearTimeout(timeout);
       }
-      await AsyncStorage.removeItem(SESSION_KEY);
-      setUser(null);
-      await signOut(auth);
-    } else {
-      await AsyncStorage.removeItem(SESSION_KEY);
-      setUser(null);
+      try {
+        await signOut(auth);
+      } catch (error) {
+        console.warn("[Terra] Firebase sign-out failed after local session clear:", error);
+      }
     }
   }, [user]);
 
