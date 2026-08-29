@@ -79,6 +79,7 @@ export default function CaregiverSettingsScreen() {
   const [inviteCode, setInviteCode] = useState<string | null>(null);
   const [inviteExpiresAt, setInviteExpiresAt] = useState<string | null>(null);
   const [inviteGenerating, setInviteGenerating] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
   const [invitePhone, setInvitePhone] = useState("");
   const [inviteSmsSending, setInviteSmsSending] = useState(false);
 
@@ -168,18 +169,30 @@ export default function CaregiverSettingsScreen() {
   const generateInviteCode = async () => {
     if (!user) return;
     setInviteGenerating(true);
+    setInviteError(null);
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
-      const result = await createInvite({
-        id: user.id,
-        name: user.name ?? "Caregiver",
-        email: user.email,
-      });
+      const result = await Promise.race([
+        createInvite({
+          id: user.id,
+          name: user.name ?? "Caregiver",
+          email: user.email,
+        }),
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(
+            () => reject(new Error("The invite service took too long to respond. Check your connection and try again.")),
+            10000
+          );
+        }),
+      ]);
       setInviteCode(result.code);
       setInviteExpiresAt(result.expiresAt);
     } catch (err) {
       const msg = (err as Error)?.message ?? "Could not generate an invite code.";
+      setInviteError(msg);
       Alert.alert("Could Not Generate Code", msg);
     } finally {
+      if (timeout) clearTimeout(timeout);
       setInviteGenerating(false);
     }
   };
@@ -592,6 +605,11 @@ export default function CaregiverSettingsScreen() {
               bg="#22FF6E"
               fg="#060a18"
             />
+            {inviteError ? (
+              <Text style={[styles.codeNote, { color: colors.destructive }]}>
+                {inviteError}
+              </Text>
+            ) : null}
 
             {inviteCode ? (
               <>
