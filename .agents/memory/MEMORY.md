@@ -19,3 +19,4 @@
 - [Play foreground-service permissions](play-foreground-permissions.md) — Twilio SDK injects unused media-projection/playback perms; blockedPermissions in app.json + new AAB, don't declare them.
 - [Location capture policy](location-capture-policy.md) — recipient location captured ONLY on check-in/emergency (user-approved), fire-and-forget; broad users read rule is a known follow-up.
 - [App Store rejection resubmission](app-store-resubmission.md) — resolve the rejected item, then resubmit its original unresolved submission; a new submission cannot claim the held version.
+- [US-only App Store launch](us-only-app-store-launch.md) — keep Terra Call available only in the United States for v1; add countries only after SMS, privacy, and support readiness.
