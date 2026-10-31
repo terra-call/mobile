@@ -13,4 +13,3 @@ description: How iOS builds are signed for this project — first-cert non-inter
 - ASC API key p8 secret is stored as ONE line — always re-wrap base64 at 64 chars into PEM before use.
 - App Store Connect app records CANNOT be created via the API — user must create them in the ASC UI; then `eas submit` needs `ascAppId` in the submit profile (Terra Call = 6800145154).
 - Apple limit: 2 distribution certs per team; setup script creates a new one each run — reuse/clean up.
-- eas-cli via `npx eas-cli@latest` in `artifacts/mobile` with `CI=1` works fine directly in shell for build `--no-wait` and submit (only long waits need workflows).
