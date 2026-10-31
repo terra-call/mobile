@@ -20,6 +20,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { Router, type IRouter, type Request, type Response } from "express";
+import { randomUUID } from "node:crypto";
+import { sendNativeCallPush } from "../lib/nativeCallPush";
 import twilio from "twilio";
 import { logger } from "../lib/logger";
 import {
@@ -142,6 +144,7 @@ router.post(
             caregiverId?: { stringValue?: string };
             initiatedBy?: { stringValue?: string };
             roomName?: { stringValue?: string };
+            status?: { stringValue?: string };
           };
         } | null)?.fields;
       const signaledRecipientId = fields?.recipientId?.stringValue;
@@ -152,7 +155,8 @@ router.post(
         !fields ||
         initiatedBy !== "recipient" ||
         signaledRoom !== roomName ||
-        signaledRecipientId !== targetUserId
+        signaledRecipientId !== targetUserId ||
+        ["cancelled", "declined", "ended"].includes(fields?.status?.stringValue ?? "")
       ) {
         logger.warn(
           {
@@ -197,6 +201,15 @@ router.post(
           "Token request rejected — caller is not the receiver nor a permitted caregiver",
         );
         return res.status(403).json({ error: "forbidden" });
+      }
+      if (activationDocId) {
+        const activation = await fetchFirestoreDocAsCaller(auth.idToken, "cameraActivations", activationDocId);
+        const fields = (activation as { fields?: Record<string, { stringValue?: string }> } | null)?.fields;
+        if (
+          fields?.roomName?.stringValue !== roomName ||
+          fields?.receiverUid?.stringValue !== targetUserId ||
+          ["cancelled", "declined", "ended"].includes(fields?.status?.stringValue ?? "")
+        ) return res.status(403).json({ error: "forbidden" });
       }
     }
 
@@ -338,6 +351,8 @@ router.post(
     // it works on every platform regardless of push token state (FCM-blocked
     // Android, app force-killed, silent mode, low power, missing iOS APNs
     // entitlement, etc). The push is now best-effort wakeup only.
+    const callUUID = randomUUID();
+    const expiresAt = Date.now() + 45_000;
     const signalResult = await createFirestoreDocAsCaller(
       auth.idToken,
       "cameraActivations",
@@ -348,6 +363,8 @@ router.post(
         receiverName: receiverName ?? "Care recipient",
         roomName,
         status: "pending",
+        callUUID,
+        expiresAt: new Date(expiresAt),
         createdAt: new Date(),
       },
     );
@@ -381,13 +398,18 @@ router.post(
       });
     }
     const signalDocName = signalResult.name;
+    const signalDocId = signalDocName.split("/").pop()!;
+    const nativePushSent = await sendNativeCallPush(receiverDoc, {
+      type: "terra_call", callUUID, signalDocId, targetUid: targetUserId,
+      expiresAt: String(expiresAt),
+    });
 
     // Best-effort push wakeup — fires only if the receiver has a valid token
     // on file. Failure here is logged but does NOT fail the request, because
     // the Firestore signal above is what actually triggers camera activation
     // on devices with the app foregrounded or recently backgrounded.
-    let pushSent = false;
-    if (receiverPushToken && receiverPushToken.startsWith("ExponentPushToken")) {
+    let pushSent = nativePushSent;
+    if (!nativePushSent && receiverPushToken && receiverPushToken.startsWith("ExponentPushToken")) {
       // The CAREGIVER's name is shown on the recipient's incoming-call
       // notification (e.g. "Pat is calling"). This is NOT a PHI concern —
       // it's the caregiver's identity, not the care recipient's health info,
@@ -405,6 +427,9 @@ router.post(
         // can ignore the push if the device happens to be logged into a
         // different account (e.g. stale push token routed to wrong device).
         receiverUid: targetUserId,
+        callUUID,
+        signalDocId,
+        expiresAt: String(expiresAt),
       }, {
         channelId: PUSH_CHANNELS.incomingCalls,
         sound: TERRA_CALL_ALERT_SOUND,
@@ -417,7 +442,7 @@ router.post(
           "Camera activation push wakeup failed (Firestore signal still delivered)",
         );
       }
-    } else {
+    } else if (!nativePushSent) {
       logger.info(
         { callerUid: auth.uid, targetUserId, roomName, hasToken: !!receiverPushToken },
         "Skipping push wakeup — no valid Expo push token on file (Firestore signal still delivered)",
@@ -433,6 +458,9 @@ router.post(
       ok: true,
       roomName,
       pushSent,
+      nativePushSent,
+      signalDocId,
+      callUUID,
       signalWritten: true,
       videoConfigured: isVideoConfigured(),
     });
@@ -536,6 +564,8 @@ router.post(
       // Write the cameraActivations signal doc using the caller's token so
       // Firestore Security Rules also enforce the recipient → caregiver
       // direction (defense-in-depth against server bugs).
+      const callUUID = randomUUID();
+      const expiresAt = Date.now() + 45_000;
       const signalResult = await createFirestoreDocAsCaller(
         auth.idToken,
         "cameraActivations",
@@ -549,6 +579,8 @@ router.post(
           caregiverName: caregiverName ?? "Caregiver",
           roomName,
           status: "pending",
+          callUUID,
+          expiresAt: new Date(expiresAt),
           createdAt: new Date(),
         },
       );
@@ -605,12 +637,17 @@ router.post(
       let pushSent = false;
       try {
         const caregiverDoc = await fetchUserDocAsCaller(auth.idToken, caregiverId);
+        const nativePushSent = await sendNativeCallPush(caregiverDoc, {
+          type: "terra_call", callUUID, signalDocId, targetUid: caregiverId,
+          expiresAt: String(expiresAt),
+        });
+        pushSent = nativePushSent;
         const caregiverPushToken =
           (caregiverDoc as {
             fields?: { expoPushToken?: { stringValue?: string } };
           } | null)?.fields?.expoPushToken?.stringValue ?? "";
 
-        if (caregiverPushToken && caregiverPushToken.startsWith("ExponentPushToken")) {
+        if (!nativePushSent && caregiverPushToken && caregiverPushToken.startsWith("ExponentPushToken")) {
           const title = "Your care recipient is calling";
           const body = "Tap to answer.";
           const pushResult = await sendPush([caregiverPushToken], title, body, {
@@ -624,6 +661,8 @@ router.post(
             // device is logged into a different account than the intended
             // caregiver (e.g. stale token routed to wrong device).
             caregiverUid: caregiverId,
+            callUUID,
+            expiresAt: String(expiresAt),
           }, {
             channelId: PUSH_CHANNELS.incomingCalls,
             sound: TERRA_CALL_ALERT_SOUND,
@@ -636,7 +675,7 @@ router.post(
               "Recipient-initiated call push wakeup failed (Firestore signal still delivered)",
             );
           }
-        } else {
+        } else if (!nativePushSent) {
           logger.info(
             { callerUid: auth.uid, caregiverId, roomName, hasToken: !!caregiverPushToken },
             "Skipping caregiver push wakeup — no valid Expo push token on file (Firestore signal still delivered)",
@@ -663,6 +702,7 @@ router.post(
         ok: true,
         roomName,
         signalDocId,
+        callUUID,
         signalWritten: true,
         pushSent,
         videoConfigured: isVideoConfigured(),

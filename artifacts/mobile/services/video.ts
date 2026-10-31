@@ -169,7 +169,7 @@ export async function initiateCameraActivation(input: {
   roomName: string;
   /** uid of the care-recipient — used by the server for permission check. */
   targetUserId: string;
-}): Promise<{ ok: boolean; videoConfigured?: boolean; pushSent?: boolean; error?: string }> {
+}): Promise<{ ok: boolean; videoConfigured?: boolean; pushSent?: boolean; signalDocId?: string; error?: string }> {
   if (!API_BASE) return { ok: false, error: "API server URL not configured" };
 
   let idToken: string;
@@ -222,11 +222,13 @@ export async function initiateCameraActivation(input: {
       ok?: boolean;
       videoConfigured?: boolean;
       pushSent?: boolean;
+      signalDocId?: string;
     };
     return {
       ok: !!data.ok,
       videoConfigured: data.videoConfigured,
       pushSent: data.pushSent,
+      signalDocId: data.signalDocId,
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to start camera";

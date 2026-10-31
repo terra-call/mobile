@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { clearNativeCallSession } from "@/services/nativeCalls";
 import {
   createUserWithEmailAndPassword,
   deleteUser,
@@ -369,6 +370,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    await clearNativeCallSession().catch(() =>
+      console.warn("[NativeCalls] Could not clear local call registration during logout"),
+    );
     // HIPAA audit — fire BEFORE signOut so request.auth.uid is still valid,
     // but DO NOT await: logout must remain instantaneous from the user's
     // perspective even if the audit write is slow.
@@ -397,7 +401,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (user && db) {
         let timeout: ReturnType<typeof setTimeout> | undefined;
         await Promise.race([
-          updateDoc(doc(db, "users", user.id), { expoPushToken: deleteField() }).catch(() => {}),
+          updateDoc(doc(db, "users", user.id), {
+            expoPushToken: deleteField(),
+            nativeCallPushToken: deleteField(),
+            nativeCallPlatform: deleteField(),
+            nativeCallApnsEnvironment: deleteField(),
+          }).catch(() => {}),
           new Promise<void>((resolve) => {
             timeout = setTimeout(resolve, 1200);
           }),
@@ -493,6 +502,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     // 4) Delete the Firebase Auth user — the account can never sign in again.
+    await clearNativeCallSession().catch(() =>
+      console.warn("[NativeCalls] Could not clear local call registration during account deletion"),
+    );
     await deleteUser(fbUser);
 
     // 5) Local cleanup.

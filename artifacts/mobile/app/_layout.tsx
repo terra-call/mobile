@@ -42,6 +42,8 @@ import { logAudit } from "@/services/audit";
 import { configureNotificationChannels, registerForPushNotifications } from "@/services/notifications";
 import { startRingtone, stopRingtone } from "@/services/ringtone";
 import { db, isFirebaseConfigured } from "@/services/firebase";
+import { NativeCallCoordinator } from "@/components/NativeCallCoordinator";
+import { presentNativeCall } from "@/services/nativeCalls";
 
 // Module-level dedupe so the push handler and the Firestore handler
 // don't both navigate for the same activation. First handler to claim a
@@ -154,9 +156,16 @@ function CameraActivationListener() {
             roomName?: string;
             caregiverName?: string;
             receiverUid?: string;
+            callUUID?: string;
+            signalDocId?: string;
+            expiresAt?: string;
           }
         | undefined;
       if (data?.type !== "camera_activate" || !data.roomName) return;
+      if (data.receiverUid && data.receiverUid === userIdRef.current && presentNativeCall({
+        callUUID: data.callUUID, signalDocId: data.signalDocId,
+        targetUid: data.receiverUid, expiresAt: data.expiresAt,
+      })) return;
 
       // DEFENSIVE — if the push includes the intended receiver UID, ignore
       // it when the currently logged-in user doesn't match. This guards
@@ -283,6 +292,8 @@ function CameraActivationFirestoreListener() {
             roomName?: string;
             status?: string;
             createdAt?: Timestamp;
+            callUUID?: string;
+            expiresAt?: Timestamp;
           };
 
           if (data.status !== "pending") return;
@@ -298,6 +309,10 @@ function CameraActivationFirestoreListener() {
           // the where() filter, but match the push-handler defense).
           const uid = userIdRef.current;
           if (uid && data.receiverUid && data.receiverUid !== uid) return;
+          if (presentNativeCall({
+            callUUID: data.callUUID, signalDocId: change.doc.id,
+            targetUid: uid, expiresAt: data.expiresAt?.toMillis?.(),
+          })) return;
 
           if (!claimActivation(roomName)) return;
 
@@ -385,6 +400,8 @@ function IncomingCallListener() {
           recipientName?: string;
           signalDocId?: string;
           caregiverUid?: string;
+          callUUID?: string;
+          expiresAt?: string;
         }
       | undefined;
     if (data?.type !== "incoming_call") return;
@@ -393,6 +410,10 @@ function IncomingCallListener() {
     if (!u || u.role !== "caregiver") return;
     // DEFENSIVE — ignore a push routed to the wrong account (stale token).
     if (data.caregiverUid && data.caregiverUid !== u.id) return;
+    if (presentNativeCall({
+      callUUID: data.callUUID, signalDocId: data.signalDocId,
+      targetUid: u.id, expiresAt: data.expiresAt,
+    })) return;
 
     const docId = data.signalDocId;
     if (!docId || !data.roomName || !data.recipientId) return;
@@ -464,6 +485,8 @@ function IncomingCallListener() {
             recipientName?: string;
             callerName?: string;
             createdAt?: Timestamp;
+            callUUID?: string;
+            expiresAt?: Timestamp;
           };
           // Drop the modal if the caregiver dismissed elsewhere or doc no
           // longer pending (answered/declined/cancelled).
@@ -486,6 +509,10 @@ function IncomingCallListener() {
             return;
           }
           if (!data.roomName || !data.recipientId) return;
+          if (presentNativeCall({
+            callUUID: data.callUUID, signalDocId: change.doc.id,
+            targetUid: user.id, expiresAt: data.expiresAt?.toMillis?.(),
+          })) return;
 
           handledRef.current.add(change.doc.id);
           // AUDIT — caregiver receipt via the Firestore path (push skipped or
@@ -820,6 +847,7 @@ function RootLayoutNav() {
     <>
       <NavigationGuard />
       <NotificationInitializer />
+      <NativeCallCoordinator />
       <CameraActivationListener />
       <CameraActivationFirestoreListener />
       <IncomingCallListener />

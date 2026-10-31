@@ -2,7 +2,7 @@
   "expo": {
     "name": "Terra Call",
     "slug": "mobile",
-    "version": "1.5.0",
+    "version": "1.6.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon_v2_text.png",
     "scheme": "mobile",
@@ -17,7 +17,11 @@
       "supportsTablet": false,
       "bundleIdentifier": "com.terracall.app",
       "buildNumber": "1",
+      "entitlements": {
+        "aps-environment": "production"
+      },
       "infoPlist": {
+        "UIBackgroundModes": ["audio", "voip"],
         "NSCameraUsageDescription": "Terra Call uses your camera so a trusted caregiver can see you during an emergency check-in. The camera only activates after you give consent and only when a caregiver initiates an emergency call.",
         "NSMicrophoneUsageDescription": "Terra Call uses your microphone during emergency video check-ins so you can talk with your caregiver.",
         "NSLocationWhenInUseUsageDescription": "Terra Call shares your location with your caregiver during emergency check-ins so they can find you quickly.",
@@ -35,6 +39,9 @@
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",
         "android.permission.POST_NOTIFICATIONS",
+        "android.permission.FOREGROUND_SERVICE_PHONE_CALL",
+        "android.permission.MANAGE_OWN_CALLS",
+        "android.permission.READ_PHONE_NUMBERS",
         "android.permission.ACCESS_NOTIFICATION_POLICY"
       ],
       "blockedPermissions": [
@@ -54,6 +61,9 @@
       ],
       "expo-font",
       "expo-web-browser",
+      "./plugins/withAndroidMapsKey",
+      "@config-plugins/react-native-callkeep",
+      "./plugins/withNativeCalls",
       [
         "expo-notifications",
         {
@@ -99,6 +109,7 @@
       "reactCompiler": true
     },
     "extra": {
+      "nativeCallApnsEnvironment": "production",
       "eas": {
         "projectId": "715d9c4f-6a1b-407b-8b3a-e2a43d458682"
       }

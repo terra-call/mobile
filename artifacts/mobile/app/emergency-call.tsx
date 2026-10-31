@@ -181,7 +181,7 @@ export default function EmergencyCallScreen() {
       logAudit({
         userId: user.id,
         action: "camera_activation_push_sent",
-        details: `Camera activation signaled to ${receiverName ?? receiverId} — push wakeup ${result.pushSent ? "dispatched via Expo" : "skipped (no valid token) — relying on Firestore signal"} (room=${roomName})`,
+        details: `Camera activation signaled to ${receiverName ?? receiverId} — push wakeup ${result.pushSent ? "dispatched" : "skipped (no valid token) — relying on Firestore signal"} (room=${roomName})`,
         targetUserId: receiverId,
       });
     }
@@ -203,6 +203,7 @@ export default function EmergencyCallScreen() {
         receiverName: receiverName ?? "Care recipient",
         receiverId,
         eventId: eventIdRef.current ?? "",
+        activationDocId: result.signalDocId ?? "",
       },
     });
   };

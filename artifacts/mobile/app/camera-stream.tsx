@@ -37,6 +37,12 @@ import {
 } from "@/services/emergencyEventLog";
 import { requestVideoToken, VIDEO_TOKEN_ERROR_MESSAGE } from "@/services/video";
 import { stopRingtone } from "@/services/ringtone";
+import { doc, onSnapshot, runTransaction, serverTimestamp } from "firebase/firestore";
+import { db } from "@/services/firebase";
+import {
+  finishNativeCall, getCallKeep, nativeCallConnected, nativeCallSnapshot,
+  subscribeNativeCalls,
+} from "@/services/nativeCalls";
 import { HomeCameraFeed } from "@/components/HomeCameraFeed";
 import {
   TwilioVideo,
@@ -83,6 +89,7 @@ export default function CameraStreamScreen() {
     // requires it for tc-call-* rooms to bind token minting to the signaled
     // 1:1 participants. Absent for tc-emrg-* emergency rooms.
     activationDocId?: string;
+    nativeCallUUID?: string;
   }>();
   const insets = useSafeAreaInsets();
   const topPad = Platform.OS === "web" ? 67 : insets.top;
@@ -142,6 +149,7 @@ export default function CameraStreamScreen() {
   const twilioRef = useRef<InstanceType<NonNullable<typeof TwilioVideo>> | null>(null);
   // Guard against double-disconnect (endStream + unmount cleanup).
   const disconnectedRef = useRef(false);
+  const endingRef = useRef(false);
   // Auto-reconnect bookkeeping for unexpected mid-call drops.
   const reconnectAttemptsRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -348,6 +356,7 @@ export default function CameraStreamScreen() {
       // Mark the session intentionally ended so a disconnect event fired by the
       // teardown below doesn't trigger an auto-reconnect on an unmounting screen.
       disconnectedRef.current = true;
+      if (params.nativeCallUUID) finishNativeCall(params.nativeCallUUID);
       if (reconnectTimerRef.current) {
         clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
@@ -429,6 +438,7 @@ export default function CameraStreamScreen() {
   // ── SDK event handlers ──────────────────────────────────────────────────
   const onRoomDidConnect: RoomEventCb = useMemo(
     () => () => {
+      if (params.nativeCallUUID) nativeCallConnected(params.nativeCallUUID);
       setRoomConnected(true);
       setConnecting(false);
       // A clean (re)connect clears the auto-reconnect budget.
@@ -596,12 +606,16 @@ export default function CameraStreamScreen() {
   const onRoomParticipantDidDisconnect: ParticipantEventCb = useMemo(
     () => ({ participant }) => {
       setRemoteTracks((prev) => prev.filter((t) => t.participantSid !== participant.sid));
+      if (params.activationDocId) void endStream();
     },
     [],
   );
 
   // ── End / disconnect ────────────────────────────────────────────────────
   const endStream = async () => {
+    if (endingRef.current) return;
+    endingRef.current = true;
+    if (params.nativeCallUUID) finishNativeCall(params.nativeCallUUID);
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
 
     if (isTwilioVideoAvailable && twilioRef.current && !disconnectedRef.current) {
@@ -630,6 +644,64 @@ export default function CameraStreamScreen() {
 
     router.back();
   };
+
+  // Keep the OS call and media lifetimes synchronized in both directions.
+  useEffect(() => {
+    const uuid = params.nativeCallUUID;
+    if (!uuid) return;
+    const unsubscribe = subscribeNativeCalls(() => {
+      const call = nativeCallSnapshot().find((item) => item.callUUID === uuid);
+      if (!call || call.action === "end") void endStream();
+    });
+    const mute = getCallKeep()?.addEventListener("didPerformSetMutedCallAction", (event) => {
+      if (event.callUUID.toLowerCase() === uuid.toLowerCase()) {
+        void twilioRef.current?.setLocalAudioEnabled(!event.muted);
+      }
+    });
+    return () => { unsubscribe(); mute?.remove(); };
+  }, [params.nativeCallUUID]);
+
+  useEffect(() => {
+    if (tokenError && params.nativeCallUUID) finishNativeCall(params.nativeCallUUID, 1);
+  }, [tokenError, params.nativeCallUUID]);
+
+  // Call cancellation/remote hang-up must also stop native UI. The same doc
+  // lets a caller terminate an unanswered ring rather than leave a ghost call.
+  useEffect(() => {
+    if (!db || !params.activationDocId) return;
+    const ref = doc(db, "cameraActivations", params.activationDocId);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const unsubscribe = onSnapshot(ref, (snapshot) => {
+      const data = snapshot.data();
+      if (!data) return;
+      if (timer) { clearTimeout(timer); timer = undefined; }
+      if (["declined", "cancelled", "ended"].includes(data.status)) {
+        void endStream();
+      } else if (data.status === "pending" && data.callerUid === user?.id && data.expiresAt) {
+        timer = setTimeout(() => {
+          void runTransaction(db!, async (tx) => {
+            if ((await tx.get(ref)).data()?.status === "pending") {
+              tx.update(ref, { status: "cancelled", cancelledAt: serverTimestamp() });
+            }
+          }).catch(() => {});
+          void endStream();
+        }, Math.max(0, data.expiresAt.toMillis() - Date.now()));
+      }
+    });
+    return () => {
+      unsubscribe();
+      if (timer) clearTimeout(timer);
+      // Preserve auth/room/identity fields; only end the existing signal.
+      void runTransaction(db!, async (tx) => {
+        const data = (await tx.get(ref)).data();
+        if (data?.status === "answered") {
+          tx.update(ref, { status: "ended", endedAt: serverTimestamp() });
+        } else if (data?.status === "pending" && data.callerUid === user?.id) {
+          tx.update(ref, { status: "cancelled", cancelledAt: serverTimestamp() });
+        }
+      }).catch(() => {});
+    };
+  }, [params.activationDocId, user?.id]);
 
   // ── Render ──────────────────────────────────────────────────────────────
   const showRealVideo =

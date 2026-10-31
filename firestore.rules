@@ -151,42 +151,52 @@ service cloud.firestore {
       //   3. The recipient who initiated their own call, so they can subscribe
       //      to status transitions (answered / declined)
       allow read:   if isSignedIn() && (
-                         (resource.data.receiverUid is string
-                          && resource.data.receiverUid == request.auth.uid)
+                         ('receiverUid' in resource.data
+                          && (resource.data.receiverUid == request.auth.uid
+                              || resource.data.callerUid == request.auth.uid))
                          ||
                          (resource.data.initiatedBy == 'recipient'
                           && (resource.data.caregiverId == request.auth.uid
                               || resource.data.recipientId == request.auth.uid))
                        );
-      // UPDATE — three permitted state transitions, all from status=='pending':
-      //   • EMERGENCY: receiver marks own doc 'processed' (existing behavior)
-      //   • RECIPIENT-INITIATED: caregiver responds 'answered' or 'declined'
-      //   • RECIPIENT-INITIATED: recipient cancels their own outgoing call
+      function isCallee() {
+        return ('receiverUid' in resource.data
+                && resource.data.receiverUid == request.auth.uid)
+            || ('caregiverId' in resource.data
+                && resource.data.initiatedBy == 'recipient'
+                && resource.data.caregiverId == request.auth.uid);
+      }
+      // Keep identity/room/push metadata immutable. Only the signaled callee
+      // may answer/decline; only the caller may cancel an unanswered call.
       allow update: if isSignedIn()
-                    && resource.data.status == 'pending'
                     && (
-                         (resource.data.receiverUid is string
+                      (resource.data.status == 'pending' && (
+                         ('receiverUid' in resource.data
                           && resource.data.receiverUid == request.auth.uid
                           && request.resource.data.status == 'processed'
                           && request.resource.data.diff(resource.data)
                                .affectedKeys()
                                .hasOnly(['status', 'processedAt']))
                          ||
-                         (resource.data.initiatedBy == 'recipient'
-                          && resource.data.caregiverId == request.auth.uid
-                          && (request.resource.data.status == 'answered'
-                              || request.resource.data.status == 'declined')
+                         (isCallee()
+                          && request.resource.data.status in ['answered', 'declined']
                           && request.resource.data.diff(resource.data)
                                .affectedKeys()
                                .hasOnly(['status', 'respondedAt']))
                          ||
-                         (resource.data.initiatedBy == 'recipient'
-                          && resource.data.recipientId == request.auth.uid
+                         (resource.data.callerUid == request.auth.uid
                           && request.resource.data.status == 'cancelled'
                           && request.resource.data.diff(resource.data)
                                .affectedKeys()
                                .hasOnly(['status', 'cancelledAt']))
-                       );
+                      ))
+                      ||
+                      (resource.data.status == 'answered'
+                       && (isCallee() || resource.data.callerUid == request.auth.uid)
+                       && request.resource.data.status == 'ended'
+                       && request.resource.data.diff(resource.data)
+                            .affectedKeys().hasOnly(['status', 'endedAt']))
+                    );
       allow delete: if false;
     }
 
