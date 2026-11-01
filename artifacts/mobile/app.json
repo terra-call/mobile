@@ -2,7 +2,7 @@
   "expo": {
     "name": "Terra Call",
     "slug": "mobile",
-    "version": "1.6.0",
+    "version": "1.6.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon_v2_text.png",
     "scheme": "mobile",
@@ -82,8 +82,8 @@
           },
           "android": {
             "minSdkVersion": 24,
-            "compileSdkVersion": 35,
-            "targetSdkVersion": 35
+            "compileSdkVersion": 36,
+            "targetSdkVersion": 36
           }
         }
       ],
@@ -115,7 +115,7 @@
       }
     },
     "owner": "terracall",
-    "runtimeVersion": "1.6.0",
+    "runtimeVersion": "1.6.1",
     "updates": {
       "url": "https://u.expo.dev/715d9c4f-6a1b-407b-8b3a-e2a43d458682"
     }

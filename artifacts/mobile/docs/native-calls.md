@@ -9,8 +9,14 @@ verified** until tested in native binaries on physical devices.
 
 - Expo SDK 54 remains unchanged. CallKeep's Expo plugin is pinned to its SDK 54
   release. Bundle/package identifiers are unchanged.
-- The app version/runtime is now **1.6.0**, distinct from the existing 1.5.0
+- The next app version/runtime is **1.6.1**, distinct from the existing 1.5.0
   binaries. Never publish this native feature as an OTA to the old runtime.
+- Android now compiles and targets API 36 (Android 16), supported by the existing
+  Expo SDK 54 / React Native 0.81 stack. Version 1.6.1 follows the already
+  uploaded 1.6.0 iOS candidate; changing source does not replace that upload.
+  Test Android 16 edge-to-edge layouts and native calling on physical devices.
+  Google Play requires a new AAB with an incremented version code; an APK is
+  suitable for direct device testing but does not resolve the production warning.
 - iOS uses `UIBackgroundModes: audio, voip`, CallKit and PushKit. PushKit uses
   the existing Push Notifications/`aps-environment` capability; there is no
   standalone general-purpose "PushKit entitlement" to add.
