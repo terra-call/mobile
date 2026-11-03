@@ -8,7 +8,9 @@
     "build": "node scripts/build.js",
     "serve": "node server/serve.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:native-calls": "node scripts/test-native-calls.cjs"
+    "test:native-calls": "node scripts/test-native-calls.cjs",
+    "android": "expo run:android",
+    "ios": "expo run:ios"
   },
   "expo": {
     "autolinking": {
@@ -84,6 +86,9 @@
     "expo-sharing": "^14.0.8",
     "expo-updates": "~29.0.17",
     "react-native-callkeep": "4.6.1",
-    "react-native-voip-push-notification": "3.3.3"
+    "react-native-voip-push-notification": "3.3.3",
+    "expo": "~54.0.34",
+    "react": "19.1.0",
+    "react-native": "0.81.5"
   }
 }
