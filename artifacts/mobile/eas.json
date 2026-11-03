@@ -33,6 +33,7 @@
       }
     },
     "production": {
+      "pnpm": "10.26.1",
       "autoIncrement": true,
       "channel": "production",
       "env": {
