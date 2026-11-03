@@ -14,7 +14,26 @@ module.exports = function withNativeCalls(config) {
     AndroidConfig.GoogleServices.withGoogleServicesFile,
   ]);
   config = withAndroidManifest(config, (mod) => {
+    mod.modResults.manifest.$["xmlns:tools"] ??= "http://schemas.android.com/tools";
     const app = AndroidConfig.Manifest.getMainApplicationOrThrow(mod.modResults);
+    // Expo Notifications and RNFirebase both supply this metadata. Explicitly
+    // keep Expo's configured color instead of RNFirebase's library default.
+    app["meta-data"] ??= [];
+    let notificationColor = app["meta-data"].find(
+      (item) => item.$["android:name"] === "com.google.firebase.messaging.default_notification_color",
+    );
+    if (!notificationColor) {
+      notificationColor = { $: {
+        "android:name": "com.google.firebase.messaging.default_notification_color",
+        "android:resource": "@color/notification_icon_color",
+      } };
+      app["meta-data"].push(notificationColor);
+    }
+    const replaced = new Set(
+      (notificationColor.$["tools:replace"] ?? "").split(",").map((value) => value.trim()).filter(Boolean),
+    );
+    replaced.add("android:resource");
+    notificationColor.$["tools:replace"] = [...replaced].join(",");
     app.service ??= [];
     let service = app.service.find(
       (item) => item.$["android:name"] === "io.wazo.callkeep.VoiceConnectionService",
