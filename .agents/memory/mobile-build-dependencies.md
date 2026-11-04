@@ -9,6 +9,12 @@ Keep cloud builds on a pnpm version compatible with the workspace lockfile and c
 
 **How to apply:** Check the first install warning, pin compatible tooling, and validate with a frozen lockfile before another cloud attempt.
 
+Pin the cloud Node runtime as well as pnpm; do not patch Metro or polyfill build-tool internals to accommodate an obsolete builder runtime.
+
+**Why:** A cloud builder reached Metro but failed on `Array.prototype.toReversed`, which the older runtime did not support. Local success on a newer Node runtime did not expose that mismatch.
+
+**How to apply:** Match the Node runtime to the installed Expo/React Native tooling requirements before investigating application JavaScript when Metro itself cannot load.
+
 Expo prebuild can insert duplicate Expo/React/React Native dependencies even when dependency updates are skipped.
 
 **Why:** A literal React version inserted alongside a catalog-based declaration caused a frozen install to fail despite both resolving to the same version.
