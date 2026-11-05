@@ -1,7 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const {
-  AndroidConfig, IOSConfig, withAndroidManifest, withAppDelegate,
+  AndroidConfig, IOSConfig, withAndroidManifest, withAppDelegate, withAppBuildGradle,
   withDangerousMod, withXcodeProject, withPlugins,
 } = require("expo/config-plugins");
 
@@ -13,6 +13,24 @@ module.exports = function withNativeCalls(config) {
     AndroidConfig.GoogleServices.withApplyPlugin,
     AndroidConfig.GoogleServices.withGoogleServicesFile,
   ]);
+  config = withAppBuildGradle(config, (mod) => {
+    if (mod.modResults.language !== "groovy") {
+      throw new Error("Terra Call Firebase dependency plugin expects Groovy app/build.gradle");
+    }
+    // Library implementation dependencies are not exposed to app Kotlin.
+    // Our service subclasses Expo's service and imports RemoteMessage directly,
+    // so the app needs its own compile dependency. Match RNFirebase's BOM.
+    const bom = require("@react-native-firebase/app/package.json").sdkVersions.android.firebase;
+    const block = `// @generated begin terra-call-firebase-messaging
+dependencies {
+    implementation platform("com.google.firebase:firebase-bom:${bom}")
+    implementation "com.google.firebase:firebase-messaging"
+}
+// @generated end terra-call-firebase-messaging`;
+    const generated = /\/\/ @generated begin terra-call-firebase-messaging[\s\S]*?\/\/ @generated end terra-call-firebase-messaging/g;
+    mod.modResults.contents = `${mod.modResults.contents.replace(generated, "").trimEnd()}\n\n${block}\n`;
+    return mod;
+  });
   config = withAndroidManifest(config, (mod) => {
     mod.modResults.manifest.$["xmlns:tools"] ??= "http://schemas.android.com/tools";
     const app = AndroidConfig.Manifest.getMainApplicationOrThrow(mod.modResults);

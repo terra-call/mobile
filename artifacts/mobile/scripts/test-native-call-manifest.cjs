@@ -4,6 +4,7 @@ const path = require("node:path");
 const vm = require("node:vm");
 
 let modifyManifest;
+let modifyBuildGradle;
 const moduleStub = { exports: {} };
 const passthrough = (config) => config;
 vm.runInNewContext(
@@ -13,6 +14,9 @@ vm.runInNewContext(
     require(name) {
       if (name === "node:fs") return fs;
       if (name === "node:path") return path;
+      if (name === "@react-native-firebase/app/package.json") {
+        return { sdkVersions: { android: { firebase: "34.10.0" } } };
+      }
       assert.equal(name, "expo/config-plugins");
       return {
         AndroidConfig: {
@@ -22,6 +26,7 @@ vm.runInNewContext(
         IOSConfig: {},
         withPlugins: passthrough,
         withAndroidManifest(config, action) { modifyManifest = action; return config; },
+        withAppBuildGradle(config, action) { modifyBuildGradle = action; return config; },
         withDangerousMod: passthrough,
         withAppDelegate: passthrough,
         withXcodeProject: passthrough,
@@ -51,3 +56,20 @@ for (const existing of [false, true]) {
   if (existing) assert(overrides.includes("android:value"), "preserve other merge overrides");
 }
 console.log("Native-call notification manifest checks passed");
+
+const gradle = { modResults: {
+  language: "groovy",
+  contents: 'apply plugin: "com.android.application"\ndependencies {\n    implementation "com.facebook.react:react-android"\n}\n',
+} };
+modifyBuildGradle(gradle);
+const once = gradle.modResults.contents;
+modifyBuildGradle(gradle);
+assert.equal(gradle.modResults.contents, once, "repeated prebuilds must not duplicate dependency blocks");
+assert(once.includes('implementation "com.google.firebase:firebase-messaging"'));
+assert(once.includes('implementation platform("com.google.firebase:firebase-bom:34.10.0")'));
+assert(once.includes('implementation "com.facebook.react:react-android"'), "preserve existing dependencies");
+gradle.modResults.contents = once.replace("firebase-bom:34.10.0", "firebase-bom:OLD");
+modifyBuildGradle(gradle);
+assert.equal(gradle.modResults.contents, once, "refresh generated BOM on RNFirebase upgrades");
+assert.throws(() => modifyBuildGradle({ modResults: { language: "kotlin", contents: "" } }), /expects Groovy/);
+console.log("Native-call app Firebase compile dependency checks passed");
