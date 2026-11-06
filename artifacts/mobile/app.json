@@ -64,6 +64,7 @@
       "./plugins/withAndroidMapsKey",
       "@config-plugins/react-native-callkeep",
       "./plugins/withNativeCalls",
+      "./plugins/withFirebaseMessagingDep",
       [
         "expo-notifications",
         {
