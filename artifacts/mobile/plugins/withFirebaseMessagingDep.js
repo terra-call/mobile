@@ -1,4 +1,6 @@
-const { withAppBuildGradle } = require('@expo/config-plugins');
+// Resolve helpers through Expo's public export rather than an undeclared
+// transitive dependency, which pnpm does not expose in clean cloud installs.
+const { withAppBuildGradle } = require('expo/config-plugins');
 
 module.exports = function withFirebaseMessagingDep(config) {
   return withAppBuildGradle(config, (config) => {

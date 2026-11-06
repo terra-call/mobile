@@ -73,3 +73,15 @@ modifyBuildGradle(gradle);
 assert.equal(gradle.modResults.contents, once, "refresh generated BOM on RNFirebase upgrades");
 assert.throws(() => modifyBuildGradle({ modResults: { language: "kotlin", contents: "" } }), /expects Groovy/);
 console.log("Native-call app Firebase compile dependency checks passed");
+
+// Mocked plugin tests above cannot catch module-resolution errors in a clean
+// pnpm install. Also load every locally registered plugin with real imports.
+const configuredPlugins = require("../app.json").expo.plugins;
+for (const entry of configuredPlugins) {
+  const plugin = Array.isArray(entry) ? entry[0] : entry;
+  if (plugin.startsWith("./plugins/")) {
+    assert.equal(typeof require(path.resolve(__dirname, "..", plugin)), "function",
+      `${plugin} must load and export a config plugin`);
+  }
+}
+console.log("All registered local Expo plugins load with real dependencies");

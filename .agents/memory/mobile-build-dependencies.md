@@ -26,3 +26,9 @@ Expo prebuild can insert duplicate Expo/React/React Native dependencies even whe
 **Why:** A literal React version inserted alongside a catalog-based declaration caused a frozen install to fail despite both resolving to the same version.
 
 **How to apply:** Review package manifest changes after prebuild. Preserve the original dependency declarations instead of committing redundant generated entries, then rerun the frozen-lockfile check.
+
+Local Expo config plugins should import shared helpers from `expo/config-plugins`, not an undeclared transitive `@expo/config-plugins` package.
+
+**Why:** A clean pnpm cloud install could not load a plugin using the transitive package path, even though the helpers were available through Expo.
+
+**How to apply:** Use the public Expo export and verify the entire registered plugin list with Expo config loading before pushing build fixes.
